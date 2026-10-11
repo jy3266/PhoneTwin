@@ -61,8 +61,9 @@ public class V4Test {
     }
 
     @Test public void unrealLinesFollowProtocol() {
-        String s = UnrealLink.ptp1(7, new float[]{1, 1.5f, -2, .25f, 0, -1, 0, 0, 1, 0}, "scan,a");
-        assertEquals("PTP1,7,1,1.5000,-2.0000,0.2500,0.0000,-1.0000,0.0000,0.0000,1.0000,0.0000,scan_a\n", s);
+        String s = UnrealLink.ptp1(7, new float[]{1, 1.5f, -2, .25f, 0, -1, 0, 0, 1, 0, 1}, "scan,a");
+        assertEquals("PTP1,7,1,1.5000,-2.0000,0.2500,0.0000,-1.0000,0.0000,0.0000,1.0000,0.0000,scan_a,1\n", s);
+        assertTrue(UnrealLink.ptp1(8, new float[]{0, 1, 2, 3, 0, 0, -1, 0, 1, 0, 0}, "s").endsWith(",s,0\n"));
         float[] v = UnrealLink.parsePth1("PTH1,12,1,255,1,104,350\n");
         assertArrayEquals(new float[]{1, 1, 1, 104, .35f}, v, 1e-6f);
         float[] far = UnrealLink.parsePth1("PTH1,1,1,0,0,-1,-1");

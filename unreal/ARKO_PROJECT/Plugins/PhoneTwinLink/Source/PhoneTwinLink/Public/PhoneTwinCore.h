@@ -80,7 +80,8 @@ namespace PhoneTwin
 	PHONETWINLINK_API double EstimateFloorZ(const TArray<FVector>& Points);
 
 	// ---- UDP line protocol
-	struct FPhonePose { uint32 Seq = 0; bool bValid = false; FVector3f P, F, U; FString ScanId; };
+	/** bWalk: the phone's walking test is running (field 14, optional; older apps: same as bValid). */
+	struct FPhonePose { uint32 Seq = 0; bool bValid = false, bWalk = false; FVector3f P, F, U; FString ScanId; };
 	struct FEspPose { uint32 Seq = 0; bool bValid = false; double X = 0, Y = 0, Z = 0, Yaw = 0, Pitch = 0, Roll = 0; };
 
 	PHONETWINLINK_API bool ParsePTP(const FString& Line, FPhonePose& Out);

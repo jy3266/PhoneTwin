@@ -321,9 +321,17 @@ void APhoneTwinScanActor::Tick(float DeltaSeconds)
 	}
 }
 
+bool APhoneTwinScanActor::IsStarted() const
+{
+	// The phone's "걷기 테스트 시작" is the start switch for everything. Without a phone (ESP32 only) it is always on.
+	const UWorld* W = GetWorld();
+	const bool bPhonePresent = W && Phone.Packets > 0 && W->GetTimeSeconds() - Phone.LastTime < 2.0;
+	return !bRequirePhoneWalkStart || !bPhonePresent || PhonePose.bWalk;
+}
+
 void APhoneTwinScanActor::UpdateTracker()
 {
-	bTracking = IsSourceAlive(Source);
+	bTracking = IsSourceAlive(Source) && IsStarted();
 	if (!bTracking) return;
 	if (Source == EPhoneTwinSource::Phone)
 	{
@@ -513,7 +521,8 @@ FString APhoneTwinScanActor::HudText() const
 		if (!RelayPeers.IsEmpty()) S += TEXT(" · ") + RelayPeers;
 		if (R.Num()) S += FString::Printf(TEXT(" · 왕복 %.0f ms"), R[R.Num() / 2]);
 	}
-	if (!bTracking) S += TEXT("\n추적 대기 중 — 선택한 장치에서 신호가 오면 시작합니다");
+	if (!IsStarted()) S += TEXT("\n대기 중 — 휴대폰에서 '걷기 테스트 시작'을 누르면 진동·소리가 시작됩니다");
+	else if (!bTracking) S += TEXT("\n추적 대기 중 — 선택한 장치에서 신호가 오면 시작합니다");
 	else if (DistanceCm < 0) S += FString::Printf(TEXT("\n범위 밖 (%.0f cm 이내에 반응)"), ReactRange);
 	else S += FString::Printf(TEXT("\n%s %s  %.1f cm  · 세기 %d%%"), bContact ? TEXT("▶ 접촉") : TEXT("근접"), *ObjectName, DistanceCm, FMath::RoundToInt(Intensity * 100));
 	S += FString::Printf(TEXT("\n스캔: %s"), *ScanStatus);

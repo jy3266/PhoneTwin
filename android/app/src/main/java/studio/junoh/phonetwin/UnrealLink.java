@@ -122,15 +122,16 @@ final class UnrealLink {
         ws = null; wsOpen = false; wsState = why + " · 2초 뒤 재접속"; retryAt = System.currentTimeMillis() + 2000;
     }
 
-    void setPose(boolean valid, float[] p, float[] f, float[] u, String scanId) {
-        pose = new float[]{valid ? 1 : 0, p[0], p[1], p[2], f[0], f[1], f[2], u[0], u[1], u[2]};
+    /** walk: the walking test is running on the phone (the start switch for Unreal's vibration and sound). */
+    void setPose(boolean valid, boolean walk, float[] p, float[] f, float[] u, String scanId) {
+        pose = new float[]{valid ? 1 : 0, p[0], p[1], p[2], f[0], f[1], f[2], u[0], u[1], u[2], walk ? 1 : 0};
         this.scanId = scanId;
     }
 
-    /** PTP1 line (PROTOCOL.md): PTP1,seq,valid,x,y,z,fx,fy,fz,ux,uy,uz,scanId */
+    /** PTP1 line (PROTOCOL.md): PTP1,seq,valid,x,y,z,fx,fy,fz,ux,uy,uz,scanId,walk */
     static String ptp1(long seq, float[] q, String scanId) {
-        return String.format(Locale.US, "PTP1,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%s\n",
-            seq, q[0] > 0 ? 1 : 0, q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], scanId.replace(',', '_'));
+        return String.format(Locale.US, "PTP1,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%s,%d\n",
+            seq, q[0] > 0 ? 1 : 0, q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], scanId.replace(',', '_'), q.length > 10 && q[10] > 0 ? 1 : 0);
     }
 
     /** Parses PTH1,seq,valid,intensity,contact,objectId,distanceMm; returns {valid, intensity0-1, contact, obj, distM} or null. */

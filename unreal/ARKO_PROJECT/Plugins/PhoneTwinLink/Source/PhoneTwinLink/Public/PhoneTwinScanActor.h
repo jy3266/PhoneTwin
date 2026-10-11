@@ -73,6 +73,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input")
 	bool bAlwaysVibratePhone = false;
 
+	/** While a phone is connected, nothing (vibration, sound, ESP32) runs until the phone's walking test is started. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Input")
+	bool bRequirePhoneWalkStart = true;
+
 	/** Also connect to the internet relay set in Project Settings > Phone Twin > Relay (both paths work at the same time). */
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input")
 	bool bUseRelay = true;
@@ -188,6 +192,8 @@ public:
 	FString HudText() const;
 	FString SourceText(EPhoneTwinSource S) const;
 	bool IsSourceAlive(EPhoneTwinSource S) const;
+	/** False while a connected phone has not started its walking test. */
+	UFUNCTION(BlueprintPure, Category = "Phone Twin") bool IsStarted() const;
 
 protected:
 	virtual void BeginPlay() override;

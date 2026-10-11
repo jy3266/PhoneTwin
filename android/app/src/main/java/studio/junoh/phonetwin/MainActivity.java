@@ -277,6 +277,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         panel.addView(section("1 · 3D 스캔 파일 불러오기 / 내보내기"));
         upAxis = button("", v -> toggleUpAxis());
         panel.addView(row(button("스캔 파일 열기 (PLY/OBJ/XYZ)", v -> openScan()), upAxis));
+        panel.addView(row(button("☁ GitHub에 올린 스캔 불러오기…", v -> chooseGitHubScan())));
         panel.addView(row(button("현재 스캔 내보내기 (PLY 저장·공유)", v -> exportScan())));
         scanInfo = label("스캔 없음", 12); panel.addView(scanInfo);
 
@@ -353,7 +354,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         ghToken = field("GitHub 토큰 (github_pat_…)", prefs.getString("gh_token", "")); ghToken.setInputType(129);
         panel.addView(row(ghRepo)); panel.addView(row(ghBranch)); panel.addView(row(ghToken));
         panel.addView(check("스캔 저장 후 자동 업로드", prefs.getBoolean("gh_auto", false), s -> prefs.edit().putBoolean("gh_auto", s).apply()));
-        panel.addView(row(button("현재 스캔 업로드", v -> uploadScan())));
+        panel.addView(row(button("현재 스캔 업로드", v -> uploadScan()), button("☁ 올린 스캔 불러오기…", v -> chooseGitHubScan())));
         ghInfo = label("", 12); panel.addView(ghInfo);
         panel.addView(label("업로드하면 웹 뷰어(GitHub Pages)와 언리얼 ARKO_PROJECT가 이 스캔을 자동으로 가져갑니다. 토큰은 GitHub → Settings → Developer settings → Fine-grained tokens에서 이 저장소 하나만 고르고 Contents 권한을 Read and write로 만들어 붙여 넣으세요. 토큰은 이 휴대폰 안에만 저장됩니다.", 11));
 
@@ -499,7 +500,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         if (on && scanning) { toastNote("스캔을 마친 뒤 걷기 테스트를 시작하세요"); return; }
         walkMode = on;
         if (on) { setPanel(false); if (view == VIEW_ORBIT) setView(VIEW_AR); if (obstacles == null) rebuildObstacles(); }
-        toastNote(on ? (aligned ? "걷기 테스트 시작 · 휴대폰을 들고 천천히 걸어 보세요" : "걷기 테스트 · 먼저 정렬이 필요합니다 (스캔 A·B, 현장 A·B)") : "걷기 테스트 종료 · 손 터치 반응으로 돌아갑니다");
+        toastNote(on ? (aligned ? "걷기 테스트 시작 · 휴대폰을 들고 천천히 걸어 보세요" : "걷기 테스트 · 먼저 정렬이 필요합니다 (스캔 A·B, 현장 A·B)") : "걷기 테스트 종료 · 진동·소리·ESP32·언리얼 연동을 멈췄습니다");
     }
     private void startPick(int mode) {
         if (cloud == null) { toastNote("먼저 스캔 파일을 여세요"); return; }
@@ -585,6 +586,58 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
             finally { tmp.delete(); uploading = false; runOnUiThread(this::refreshPanel); }
         }, "github-upload").start();
     }
+    // ---------------------------------------------------------------------------------- load a scan back from GitHub
+    private GitHubScans gitHubScans() {
+        String repo = ghRepo.getText().toString().trim(), branch = ghBranch.getText().toString().trim(), token = ghToken.getText().toString().trim();
+        prefs.edit().putString("gh_repo", repo).putString("gh_branch", branch.isEmpty() ? "main" : branch).putString("gh_token", token).apply();
+        return new GitHubScans(repo, branch, token);
+    }
+    /** Lists scans/index.json and lets the user pick one (for comparing the scanned space with another place). */
+    private void chooseGitHubScan() {
+        if (scanning) { toastNote("스캔을 마친 뒤 불러오세요"); return; }
+        final GitHubScans gh = gitHubScans();
+        ghStatus = "GitHub 스캔 목록을 받는 중…"; toastNote(ghStatus);
+        new Thread(() -> {
+            try {
+                final List<GitHubScans.Entry> list = gh.list();
+                ghStatus = "GitHub 스캔 " + list.size() + "개";
+                runOnUiThread(() -> {
+                    refreshPanel();
+                    if (list.isEmpty()) { toastNote("GitHub에 올린 스캔이 없습니다"); return; }
+                    String cur = currentScanId(); String[] names = new String[list.size()];
+                    for (int i = 0; i < names.length; i++) {
+                        GitHubScans.Entry e = list.get(i);
+                        names[i] = (e.id.equals(cur) ? "● " : "") + e.id + "\n" + (e.created.length() >= 16 ? e.created.substring(0, 16).replace('T', ' ') : e.created)
+                            + String.format(Locale.US, " · %,d점", e.points) + (e.device.isEmpty() ? "" : " · " + e.device);
+                    }
+                    new AlertDialog.Builder(this).setTitle("불러올 스캔 (최신이 위)").setItems(names, (d, which) -> downloadGitHubScan(gh, list.get(which)))
+                        .setNegativeButton("닫기", null).show();
+                });
+            } catch (Exception e) { ghStatus = "목록 받기 실패: " + e.getMessage(); toastNote(ghStatus); }
+        }, "github-list").start();
+    }
+    private void downloadGitHubScan(GitHubScans gh, GitHubScans.Entry e) {
+        ghStatus = "내려받는 중: " + e.id + String.format(Locale.US, " (%,d점)", e.points); toastNote(ghStatus);
+        new Thread(() -> {
+            File tmp = new File(getFilesDir(), "scan_tmp"), dst = new File(getFilesDir(), "scan_current");
+            try {
+                gh.download(e.ply, tmp);
+                JSONObject scanData = new JSONObject().put("objects", new JSONArray()).put("ai", new JSONArray());
+                try { scanData = GitHubScans.toScanData(gh.text(e.meta)); } catch (Exception noMeta) { /* PLY only: no A·B, no objects */ }
+                if (dst.exists() && !dst.delete() || !tmp.renameTo(dst)) throw new IOException("파일 저장 실패");
+                walkMode = false; liveAlign = false; zUp = false;
+                prefs.edit().putBoolean("zup", false).putString("scan_name", e.id + ".ply").putString("scan_ext", "ply")
+                    .putString("scan_created", e.created.isEmpty() ? new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).format(new Date()) : e.created)
+                    .putString("scan_data", scanData.toString()).apply();
+                loadScanData();
+                boolean ab; synchronized (data) { ab = scanA != null && scanB != null; }
+                ghStatus = "GitHub 스캔을 불러왔습니다: " + e.id + (ab ? "\n스캔 A·B 포함 · 2번에서 이 장소의 현장 A·B를 기록하면 겹쳐 비교할 수 있습니다" : "\n스캔 A·B 없음 · 3인칭 지도에서 스캔 A·B를 먼저 탭하세요");
+                saveScanData(); loadScan();
+                runOnUiThread(this::refreshPanel);
+            } catch (Exception ex) { tmp.delete(); ghStatus = "불러오기 실패: " + ex.getMessage(); toastNote(ghStatus); }
+        }, "github-download").start();
+    }
+
     private void exportScan() {
         if (!new File(getFilesDir(), "scan_current").exists()) { toastNote("내보낼 스캔이 없습니다"); return; }
         Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT); i.addCategory(Intent.CATEGORY_OPENABLE);
@@ -796,12 +849,13 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
     /** GL thread: latest phone pose in the scan frame S for the Unreal link (PTP1). Invalid while scanning or not aligned. */
     private void sendUnreal(Camera camera) {
         if (!unreal.running()) return;
-        boolean ok = valid && !scanning && camS != null;
+        boolean ok = valid && !scanning && camS != null, walk = ok && walkMode;
         if (ok) {
             Pose d = camera.getDisplayOrientedPose(); float[] z = d.getZAxis(), y = d.getYAxis();
             ueP = camS.clone(); ueF = unit(dirXf(sFromWorld, new float[]{-z[0], -z[1], -z[2]})); ueU = unit(dirXf(sFromWorld, y));
         }
-        unreal.setPose(ok, ueP, ueF, ueU, currentScanId());
+        // pose is valid only during the walking test: Unreal reacts only after "걷기 테스트 시작"
+        unreal.setPose(walk, walk, ueP, ueF, ueU, currentScanId());
     }
 
     @Override public void onDrawFrame(GL10 gl) {
@@ -1129,7 +1183,14 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         camS = xf(sFromWorld, cam.getTranslation()); camFwdS = xf(sFromWorld, cam.transformPoint(new float[]{0, 0, -.4f}));
         probeS = probe;
         if (walkMode) { walkTwin(camera); return; }
+        // Everything (vibration, sound, ESP32, Unreal) starts only with "걷기 테스트 시작".
+        feedback.update(false, 0, false, -1, Float.POSITIVE_INFINITY);
+        hudNear = hudAhead = Float.POSITIVE_INFINITY; hudDeadEnd = false; hudDist = Float.POSITIVE_INFINITY; hudIntensity = 0; hudObj = -1; hudContact = false; activeObj = -1; nearOn = false;
+    }
 
+    /** v3 hand-touch reaction; no longer called (tests start with the walking test only). Kept for reference. */
+    @SuppressWarnings("unused")
+    private void handTwin(float[] probe) {
         float sc = scale, best = Float.POSITIVE_INFINITY; int obj = -1; float[] near = new float[3];
         SurfaceIndex idx = index;
         if (surfaceOn && idx != null) {
@@ -1244,6 +1305,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         }
         if (aimTarget != 0) return floorHit ? "바닥 인식됨 · 원을 테이프 지점에 맞추고 기록 버튼을 누르세요" : "바닥을 찾는 중 · 바닥을 비추며 휴대폰을 천천히 움직이세요";
         if (!valid) return cloud == null ? "스캔 없음 · 설정 ▼ 에서 스캔 파일을 여세요" : !aligned ? "정렬 전 · 스캔 A·B, 현장 A·B를 지정하세요" : "추적 대기 중 · 카메라로 주변을 비추세요";
+        if (!walkMode) return "정렬 완료 · 위쪽 '🚶 걷기 테스트 시작'을 누르면 진동·소리·ESP32·언리얼 연동이 시작됩니다";
         float d = hudDist, i = hudIntensity; int o = hudObj;
         StringBuilder bar = new StringBuilder(); int n = Math.round(i*12); for (int k = 0; k < 12; k++) bar.append(k < n ? '█' : '·');
         String what = o < 0 ? "범위 밖" : o == 0 ? (walkMode ? "벽·장애물" : "스캔 표면") : objName(o);
@@ -1418,7 +1480,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
     private void updateSounds(Camera camera) {
         long now = SystemClock.uptimeMillis(); if (now - lastSound < 100) return; lastSound = now;
         List<AiObjects.Item> l = aiCache; float[] p = camS;
-        if (!soundOn || !valid || p == null || l.isEmpty()) { sound.update(Collections.<SpatialSound.Src>emptyList()); return; }
+        if (!soundOn || !valid || !walkMode || p == null || l.isEmpty()) { sound.update(Collections.<SpatialSound.Src>emptyList()); return; }
         float[] h = heading(camera); float sc = scale;
         List<float[]> near = new ArrayList<>();
         for (int i = 0; i < l.size(); i++) {

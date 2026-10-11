@@ -78,6 +78,9 @@ bool FPhoneTwinPacketTest::RunTest(const FString&)
 	TestTrue(TEXT("PTP1"), ParsePTP(TEXT("PTP1,42,1,0.5,1.2,-3,0,0,-1,0,1,0,phone_scan_20261011_1530\n"), P));
 	TestEqual(TEXT("seq"), P.Seq, 42u); TestTrue(TEXT("valid"), P.bValid);
 	TestEqual(TEXT("pos"), P.P, FVector3f(.5f, 1.2f, -3)); TestEqual(TEXT("scan"), P.ScanId, FString(TEXT("phone_scan_20261011_1530")));
+	TestTrue(TEXT("old PTP1: walk follows valid"), P.bWalk);
+	TestTrue(TEXT("PTP1 walk=0"), ParsePTP(TEXT("PTP1,43,1,0,0,0,0,0,-1,0,1,0,s,0"), P) && P.bValid && !P.bWalk);
+	TestTrue(TEXT("PTP1 walk=1"), ParsePTP(TEXT("PTP1,44,1,0,0,0,0,0,-1,0,1,0,s,1"), P) && P.bWalk);
 	TestFalse(TEXT("short PTP1"), ParsePTP(TEXT("PTP1,1,1,0,0"), P));
 	FEspPose E;
 	TestTrue(TEXT("PTE1"), ParsePTE(TEXT("PTE1,7,1,1.25,-0.5,1.1,90,-10,5"), E));

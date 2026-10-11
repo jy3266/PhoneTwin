@@ -305,6 +305,7 @@ bool ParsePTP(const FString& Line, FPhonePose& Out)
 	Out.Seq = (uint32)FCString::Atoi64(*W[1]); Out.bValid = FCString::Atoi(*W[2]) != 0;
 	Out.P = FVector3f(F(3), F(4), F(5)); Out.F = FVector3f(F(6), F(7), F(8)); Out.U = FVector3f(F(9), F(10), F(11));
 	Out.ScanId = W.Num() > 12 ? W[12] : FString();
+	Out.bWalk = W.Num() > 13 ? FCString::Atoi(*W[13]) != 0 : Out.bValid;
 	if (Out.F.IsNearlyZero()) Out.F = FVector3f(0, 0, -1);
 	if (Out.U.IsNearlyZero()) Out.U = FVector3f(0, 1, 0);
 	Out.F.Normalize(); Out.U.Normalize();
