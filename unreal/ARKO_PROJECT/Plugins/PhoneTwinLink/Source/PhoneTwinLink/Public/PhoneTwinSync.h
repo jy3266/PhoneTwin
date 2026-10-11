@@ -40,6 +40,17 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Game")
 	bool bAutoSpawnInGame = true;
 
+	/** Internet relay (DigitalOcean App Platform, PROTOCOL.md §3), e.g. wss://phonetwin-relay-xxxx.ondigitalocean.app. Empty = local Wi-Fi UDP only. */
+	UPROPERTY(config, EditAnywhere, Category = "Relay")
+	FString RelayUrl;
+
+	UPROPERTY(config, EditAnywhere, Category = "Relay")
+	FString RelayRoom = TEXT("arko");
+
+	/** Must match RELAY_KEY on the server. Stored in Config/DefaultGame.ini of this project. */
+	UPROPERTY(config, EditAnywhere, Category = "Relay", meta = (PasswordField = true))
+	FString RelayKey;
+
 	static FString ScanDir();
 };
 

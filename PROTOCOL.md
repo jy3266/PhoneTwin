@@ -86,3 +86,22 @@ scans/<id>.json     메타데이터
 2. GitHub Pages가 main 브랜치 루트(index.html + web/ + scans/)를 그대로 배포 → 웹 뷰어에서 바로 보임.
 3. 언리얼 플러그인: 시작할 때와 90초마다 `scans/index.json`을 확인 → 새 스캔을 `ARKO_PROJECT/Content/PhoneTwinScans/`로 내려받고 → 가장 최근(또는 고른) 스캔을 띄움.
    PC에서 직접 `Content/PhoneTwinScans/`에 PLY를 넣어도 됩니다.
+
+## 3. 인터넷 릴레이 (DigitalOcean App Platform, WebSocket)
+
+같은 Wi-Fi에 있을 수 없을 때 쓰는 **보조 경로**입니다. App Platform은 UDP를 받지 않으므로 WebSocket(wss)을 씁니다.
+DigitalOcean에는 한국 리전이 없어 가장 가까운 싱가포르(`sgp`)를 쓰며, 한 번 오가는 데 약 70~90 ms, 장치→언리얼→ESP32 전체는 약 100~200 ms입니다.
+**전시 현장에서는 §1의 LAN UDP를 기본으로 쓰고**, 릴레이는 원격 시연·네트워크가 분리된 현장·웹 실시간 보기용입니다. 언리얼은 두 경로를 동시에 받습니다.
+
+```
+wss://<앱 주소>/ws?room=<방 이름>&role=<phone|esp32|unreal|viewer>&key=<RELAY_KEY>
+```
+- 텍스트 프레임 한 개에 §1의 줄(`PTP1`, `PTE1`, `PTH1`, `PTA1`)을 그대로 담습니다. 여러 줄이어도 됩니다.
+- 전달 규칙(같은 room 안에서만):
+  - `phone`, `esp32`가 보낸 것 → `unreal`, `viewer`
+  - `unreal`이 보낸 것 → `phone`, `esp32`, `viewer`
+  - `viewer`는 읽기 전용(보낸 것은 버림)
+- 서버 → 클라이언트 알림: 접속 직후 `PTR1,welcome,<room>,<role>`, 2초마다 `PTR1,peers,phone=N,esp32=N,unreal=N,viewer=N`.
+- 지연 측정: 클라이언트가 `PTR1,ping,<임의 값>`을 보내면 서버가 보낸 쪽에만 `PTR1,pong,<같은 값>`을 돌려줍니다.
+- 서버 환경 변수 `RELAY_KEY`가 있으면 phone·esp32·unreal은 같은 key가 필요합니다. `VIEW_KEY`가 있으면 viewer도 key가 필요합니다(없으면 누구나 읽기 가능).
+- 서버는 15초마다 ping을 보내고, 클라이언트는 끊기면 2초 뒤 다시 접속합니다.

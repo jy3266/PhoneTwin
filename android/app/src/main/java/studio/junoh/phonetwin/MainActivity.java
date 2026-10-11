@@ -83,7 +83,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
 
     // ---- GitHub upload + Unreal link
     private final UnrealLink unreal = new UnrealLink();
-    private EditText ghRepo, ghBranch, ghToken, unrealHost, unrealPort; private TextView ghInfo, unrealInfo;
+    private EditText ghRepo, ghBranch, ghToken, unrealHost, unrealPort, relayUrl, relayRoom, relayKey; private RadioButton viaRelay; private TextView ghInfo, unrealInfo;
     private volatile String ghStatus = "업로드 전"; private volatile boolean uploading = false;
 
     // ---- aiming at the floor marks A/B with the camera visible
@@ -358,15 +358,27 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         panel.addView(label("업로드하면 웹 뷰어(GitHub Pages)와 언리얼 ARKO_PROJECT가 이 스캔을 자동으로 가져갑니다. 토큰은 GitHub → Settings → Developer settings → Fine-grained tokens에서 이 저장소 하나만 고르고 Contents 권한을 Read and write로 만들어 붙여 넣으세요. 토큰은 이 휴대폰 안에만 저장됩니다.", 11));
 
         // 9. Unreal
-        panel.addView(section("9 · 언리얼 연동 (UDP)"));
-        unrealHost = field("언리얼 PC IPv4 (예: 192.168.0.10)", prefs.getString("ue_host", ""));
+        panel.addView(section("9 · 언리얼 연동 (UDP / 인터넷 릴레이)"));
+        RadioGroup mode = new RadioGroup(this); mode.setOrientation(RadioGroup.VERTICAL);
+        RadioButton viaUdp = new RadioButton(this); viaUdp.setText("같은 Wi-Fi (UDP, 빠름 · 약 5ms)"); viaUdp.setTextColor(Color.WHITE); viaUdp.setId(View.generateViewId());
+        viaRelay = new RadioButton(this); viaRelay.setText("인터넷 릴레이 (DigitalOcean, 느림 · 약 100ms 이상)"); viaRelay.setTextColor(Color.WHITE); viaRelay.setId(View.generateViewId());
+        mode.addView(viaUdp); mode.addView(viaRelay);
+        if (prefs.getBoolean("ue_relay", false)) viaRelay.setChecked(true); else viaUdp.setChecked(true);
+        mode.setOnCheckedChangeListener((g, id) -> prefs.edit().putBoolean("ue_relay", id == viaRelay.getId()).apply());
+        panel.addView(mode);
+        unrealHost = field("언리얼 PC IPv4 (예: 192.168.0.10) · Wi-Fi 방식", prefs.getString("ue_host", ""));
         unrealPort = field("포트", String.valueOf(prefs.getInt("ue_port", 7777))); unrealPort.setInputType(2);
         panel.addView(row(unrealHost)); panel.addView(row(unrealPort));
+        relayUrl = field("릴레이 주소 (예: wss://phonetwin-relay-xxxx.ondigitalocean.app)", prefs.getString("relay_url", ""));
+        relayRoom = field("방 이름 (언리얼·ESP32와 같게)", prefs.getString("relay_room", "arko"));
+        relayKey = field("릴레이 키 (서버의 RELAY_KEY)", prefs.getString("relay_key", ""));
+        relayKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        panel.addView(row(relayUrl)); panel.addView(row(relayRoom)); panel.addView(row(relayKey));
         panel.addView(row(button("송신 시작", v -> startUnreal()), button("중지", v -> unreal.stop())));
         feedback.remote = unreal; feedback.useRemote = prefs.getBoolean("ue_haptic", true);
-        panel.addView(check("언리얼이 계산한 진동 사용 (UDP 4211 수신)", feedback.useRemote, s -> { feedback.useRemote = s; prefs.edit().putBoolean("ue_haptic", s).apply(); }));
+        panel.addView(check("언리얼이 계산한 진동 사용 (UDP 4211 또는 릴레이로 수신)", feedback.useRemote, s -> { feedback.useRemote = s; prefs.edit().putBoolean("ue_haptic", s).apply(); }));
         unrealInfo = label("", 12); panel.addView(unrealInfo);
-        panel.addView(label("휴대폰 위치·방향(PTP1)을 30Hz로 언리얼 PC에 보냅니다. 언리얼이 거리를 계산해 진동 세기(PTH1)를 돌려주면 그 값으로 진동하고, 신호가 끊기면 휴대폰이 직접 계산한 값으로 돌아갑니다. PC와 같은 Wi-Fi에 연결하세요.", 11));
+        panel.addView(label("휴대폰 위치·방향(PTP1)을 30Hz로 언리얼 PC에 보냅니다. 언리얼이 거리를 계산해 진동 세기(PTH1)를 돌려주면 그 값으로 진동하고, 신호가 끊기면 휴대폰이 직접 계산한 값으로 돌아갑니다. Wi-Fi 방식은 PC와 같은 Wi-Fi에 연결하세요. 같은 Wi-Fi가 안 되는 곳에서는 릴레이 방식을 고르고 DigitalOcean 릴레이 주소·방 이름·키를 넣으세요(언리얼 프로젝트 설정의 Relay 값과 같게). 릴레이는 싱가포르 서버를 거쳐 진동이 0.1~0.2초 늦습니다.", 11));
         panel.addView(label("\n", 8));
 
         setView(VIEW_ORBIT);
@@ -520,6 +532,13 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
     @Override public void onWindowFocusChanged(boolean focus) { super.onWindowFocusChanged(focus); if (focus && scanning) hideSystemBars(true); }
 
     private void startUnreal() {
+        if (viaRelay.isChecked()) {
+            String u = relayUrl.getText().toString().trim(), r = relayRoom.getText().toString().trim(), k = relayKey.getText().toString().trim();
+            if (u.isEmpty()) { toastNote("릴레이 주소를 넣으세요 (DigitalOcean 앱 주소)"); return; }
+            prefs.edit().putString("relay_url", u).putString("relay_room", r).putString("relay_key", k).apply();
+            unreal.startRelay(u, r, k);
+            return;
+        }
         String h = unrealHost.getText().toString().trim(); int port;
         try { port = Integer.parseInt(unrealPort.getText().toString().trim()); } catch (NumberFormatException e) { port = -1; }
         if (h.isEmpty() || port < 1 || port > 65535) { toastNote("언리얼 PC IP와 포트를 확인하세요"); return; }

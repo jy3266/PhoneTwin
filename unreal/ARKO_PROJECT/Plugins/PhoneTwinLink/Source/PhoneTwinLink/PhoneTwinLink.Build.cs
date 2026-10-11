@@ -6,6 +6,6 @@ public class PhoneTwinLink : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "DeveloperSettings", "LidarPointCloudRuntime" });
-		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "HTTP", "Json", "Slate", "SlateCore", "InputCore", "AudioExtensions" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "HTTP", "Json", "Slate", "SlateCore", "InputCore", "AudioExtensions", "WebSockets" });
 	}
 }

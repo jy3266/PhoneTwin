@@ -30,6 +30,9 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Notifications/SProgressBar.h"
+#include "WebSocketsModule.h"
+#include "IWebSocket.h"
+#include "GenericPlatform/GenericPlatformHttp.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPhoneTwin, Log, All);
 
@@ -146,6 +149,7 @@ void APhoneTwinScanActor::BeginPlay()
 {
 	Super::BeginPlay();
 	OpenSocket();
+	ConnectRelay();
 	SurfaceAudio = NewObject<UAudioComponent>(this); SurfaceAudio->bAutoActivate = false; SurfaceAudio->bAllowSpatialization = false;
 	SurfaceAudio->SetupAttachment(Tracker); SurfaceAudio->RegisterComponent();
 
@@ -169,6 +173,7 @@ void APhoneTwinScanActor::EndPlay(const EEndPlayReason::Type Reason)
 	FPhoneTwinSync::Get().OnSynced.Remove(SyncHandle);
 	if (Hud.IsValid()) if (UGameViewportClient* VP = GetWorld()->GetGameViewport()) VP->RemoveViewportWidgetContent(Hud.ToSharedRef());
 	Hud.Reset();
+	if (Relay.IsValid()) { Relay->OnClosed().Clear(); Relay->OnMessage().Clear(); Relay->Close(); Relay.Reset(); }
 	if (Socket) { Socket->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket); Socket = nullptr; }
 	SetHideLevelGeometry(false);
 	Super::EndPlay(Reason);
@@ -189,27 +194,75 @@ void APhoneTwinScanActor::Receive()
 	ISocketSubsystem* SS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
 	TSharedRef<FInternetAddr> From = SS->CreateInternetAddr();
 	uint8 Buf[1024]; int32 Read = 0; uint32 Pending = 0;
-	const double Now = GetWorld()->GetTimeSeconds();
 	while (Socket->HasPendingData(Pending) && Socket->RecvFrom(Buf, sizeof(Buf) - 1, Read, *From))
 	{
 		Buf[Read] = 0;
 		FString Text = UTF8_TO_TCHAR((const ANSICHAR*)Buf);
 		TArray<FString> Lines; Text.ParseIntoArrayLines(Lines);
 		const FString Ip = From->ToString(false);
+		for (const FString& L : Lines) HandleLine(L, Ip);
+	}
+}
+
+void APhoneTwinScanActor::HandleLine(const FString& L, const FString& From)
+{
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (L.StartsWith(TEXT("PTP1")))
+	{
+		PhoneTwin::FPhonePose P;
+		if (PhoneTwin::ParsePTP(L, P)) { PhonePose = P; Phone.LastTime = Now; Phone.Address = From; Phone.Seq = P.Seq; Phone.Packets++; PhoneScanId = P.ScanId; }
+	}
+	else if (L.StartsWith(TEXT("PTE1")))
+	{
+		PhoneTwin::FEspPose E;
+		if (PhoneTwin::ParsePTE(L, E)) { EspPose = E; Esp.LastTime = Now; Esp.Address = From; Esp.Seq = E.Seq; Esp.Packets++; }
+	}
+	else if (L.StartsWith(TEXT("PTA1"))) EspAckTime = Now;   // vibration packets reach the ESP32
+}
+
+// ------------------------------------------------------------------------------------------------ internet relay (PROTOCOL.md §3)
+void APhoneTwinScanActor::ConnectRelay()
+{
+	const UPhoneTwinSettings* S = GetDefault<UPhoneTwinSettings>();
+	FString Base = S->RelayUrl.TrimStartAndEnd();
+	if (!bUseRelay || Base.IsEmpty()) { RelayStatus.Reset(); UE_LOG(LogPhoneTwin, Log, TEXT("relay off (Project Settings > Phone Twin > Relay Url is empty)")); return; }
+	Base.RemoveFromEnd(TEXT("/"));
+	if (Base.StartsWith(TEXT("https://"))) Base = TEXT("wss://") + Base.Mid(8); else if (Base.StartsWith(TEXT("http://"))) Base = TEXT("ws://") + Base.Mid(7);
+	const FString Url = FString::Printf(TEXT("%s/ws?room=%s&role=unreal&key=%s"), *Base, *FGenericPlatformHttp::UrlEncode(S->RelayRoom), *FGenericPlatformHttp::UrlEncode(S->RelayKey));
+	FModuleManager::LoadModuleChecked<FWebSocketsModule>(TEXT("WebSockets"));
+	Relay = FWebSocketsModule::Get().CreateWebSocket(Url, TEXT(""));
+	RelayStatus = TEXT("연결 중…");
+	TWeakObjectPtr<APhoneTwinScanActor> Weak(this);
+	UE_LOG(LogPhoneTwin, Log, TEXT("relay connecting: %s/ws?room=%s&role=unreal"), *Base, *S->RelayRoom);
+	Relay->OnConnected().AddLambda([Weak]() { if (Weak.IsValid()) { Weak->RelayStatus = TEXT("연결됨"); UE_LOG(LogPhoneTwin, Log, TEXT("relay connected")); } });
+	Relay->OnConnectionError().AddLambda([Weak](const FString& Err) { if (Weak.IsValid()) { Weak->RelayStatus = TEXT("연결 실패: ") + Err; Weak->RelayRetry = 3; UE_LOG(LogPhoneTwin, Warning, TEXT("relay error: %s"), *Err); } });
+	Relay->OnClosed().AddLambda([Weak](int32 Code, const FString& Reason, bool) { if (Weak.IsValid()) { Weak->RelayStatus = FString::Printf(TEXT("끊김 (%d)"), Code); Weak->RelayRetry = 2; } });
+	Relay->OnMessage().AddLambda([Weak](const FString& Msg)
+	{
+		APhoneTwinScanActor* A = Weak.Get(); if (!A) return;
+		TArray<FString> Lines; Msg.ParseIntoArrayLines(Lines);
 		for (const FString& L : Lines)
 		{
-			if (L.StartsWith(TEXT("PTP1")))
+			if (L.StartsWith(TEXT("PTR1,peers,"))) A->RelayPeers = L.Mid(11).Replace(TEXT(","), TEXT(" "));
+			else if (L.StartsWith(TEXT("PTR1,pong,")))
 			{
-				PhoneTwin::FPhonePose P;
-				if (PhoneTwin::ParsePTP(L, P)) { PhonePose = P; Phone.LastTime = Now; Phone.Address = Ip; Phone.Seq = P.Seq; Phone.Packets++; PhoneScanId = P.ScanId; }
+				const double Ms = (FPlatformTime::Seconds() - FCString::Atod(*L.Mid(10))) * 1000.0;
+				A->RelayRtt.Add(Ms); if (A->RelayRtt.Num() > 10) A->RelayRtt.RemoveAt(0);
 			}
-			else if (L.StartsWith(TEXT("PTE1")))
-			{
-				PhoneTwin::FEspPose E;
-				if (PhoneTwin::ParsePTE(L, E)) { EspPose = E; Esp.LastTime = Now; Esp.Address = Ip; Esp.Seq = E.Seq; Esp.Packets++; }
-			}
-			else if (L.StartsWith(TEXT("PTA1"))) EspAckTime = Now;   // vibration packets reach the ESP32
+			else if (!L.StartsWith(TEXT("PTR1"))) A->HandleLine(L, TEXT("relay"));
 		}
+	});
+	Relay->Connect();
+}
+
+void APhoneTwinScanActor::TickRelay(float DeltaSeconds)
+{
+	if (!Relay.IsValid()) return;
+	if (RelayRetry > 0 && (RelayRetry -= DeltaSeconds) <= 0) { RelayRetry = 0; Relay.Reset(); ConnectRelay(); return; }
+	if (Relay->IsConnected() && (RelayPing += DeltaSeconds) > 2.0)
+	{
+		RelayPing = 0;
+		Relay->Send(FString::Printf(TEXT("PTR1,ping,%.6f"), FPlatformTime::Seconds()));
 	}
 }
 
@@ -230,6 +283,8 @@ void APhoneTwinScanActor::SendHaptics()
 	const FString EspIp = !EspAddress.IsEmpty() ? EspAddress : Esp.Address;
 	if (Source == EPhoneTwinSource::Esp32 || bAlwaysVibrateEsp) SendTo(EspIp, EspHapticPort, Line);
 	if (Source == EPhoneTwinSource::Phone || bAlwaysVibratePhone) SendTo(Phone.Address, PhoneHapticPort, Line);
+	// relay: one line reaches every phone/ESP32 in the room
+	if (Relay.IsValid() && Relay->IsConnected()) Relay->Send(Line);
 }
 
 bool APhoneTwinScanActor::IsSourceAlive(EPhoneTwinSource S) const
@@ -245,6 +300,7 @@ void APhoneTwinScanActor::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	Receive();
+	TickRelay(DeltaSeconds);
 	HandleKeys();
 	UpdateTracker();
 	Measure();
@@ -450,6 +506,13 @@ FString APhoneTwinScanActor::HudText() const
 	};
 	FString S = FString::Printf(TEXT("입력: %s\n%s\n%s"), *SourceText(Source), *Link(Phone, PhonePose.bValid, TEXT("휴대폰")), *Link(Esp, EspPose.bValid, TEXT("ESP32")));
 	if (Now - EspAckTime < 1.5) S += TEXT(" · 진동 응답 OK");
+	if (!RelayStatus.IsEmpty())
+	{
+		TArray<double> R = RelayRtt; R.Sort();
+		S += TEXT("\n릴레이: ") + RelayStatus;
+		if (!RelayPeers.IsEmpty()) S += TEXT(" · ") + RelayPeers;
+		if (R.Num()) S += FString::Printf(TEXT(" · 왕복 %.0f ms"), R[R.Num() / 2]);
+	}
 	if (!bTracking) S += TEXT("\n추적 대기 중 — 선택한 장치에서 신호가 오면 시작합니다");
 	else if (DistanceCm < 0) S += FString::Printf(TEXT("\n범위 밖 (%.0f cm 이내에 반응)"), ReactRange);
 	else S += FString::Printf(TEXT("\n%s %s  %.1f cm  · 세기 %d%%"), bContact ? TEXT("▶ 접촉") : TEXT("근접"), *ObjectName, DistanceCm, FMath::RoundToInt(Intensity * 100));

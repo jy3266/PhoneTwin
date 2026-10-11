@@ -1,0 +1,15 @@
+{
+  "name": "phonetwin-relay",
+  "version": "0.4.0",
+  "private": true,
+  "description": "WebSocket relay between phone, ESP32 and Unreal for Phone Twin (PROTOCOL.md §3)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "ws": "8.18.0"
+  }
+}

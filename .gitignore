@@ -14,3 +14,4 @@ windows/.venv/
 # Unreal (only plugin/project source is kept here)
 unreal/**/Binaries/
 unreal/**/Intermediate/
+relay/node_modules/

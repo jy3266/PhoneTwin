@@ -42,6 +42,15 @@
     </section>
 
     <section>
+      <h2>실시간 위치 (릴레이)</h2>
+      <label class="field">릴레이 주소<input id="relayUrl" type="text" placeholder="wss://phonetwin-relay-xxxx.ondigitalocean.app" autocomplete="off" spellcheck="false"></label>
+      <label class="field">방 이름<input id="relayRoom" type="text" value="arko" autocomplete="off" spellcheck="false"></label>
+      <div class="buttons"><button id="relayGo">연결</button><button id="relayStop">끊기</button></div>
+      <div id="relayState" class="info muted">연결 안 됨</div>
+      <p class="hint">DigitalOcean 릴레이에 읽기 전용(viewer)으로 붙어 휴대폰(하늘색)·ESP32(자홍색) 위치와 언리얼이 계산한 진동 세기를 보여 줍니다. 인터넷을 거치므로 실제보다 0.1~0.2초 늦게 보입니다.</p>
+    </section>
+
+    <section>
       <h2>실시간 연동 구조</h2>
       <pre class="diagram">휴대폰 (ARCore 위치) ─┐  UDP PTP1
 ESP32 (UWB + IMU) ───┤  UDP PTE1
@@ -50,7 +59,7 @@ ESP32 (UWB + IMU) ───┤  UDP PTE1
             거리 계산 · 소리 · 진동 세기
                      │  UDP PTH1
      ESP32 :4210 ◀───┴───▶ 휴대폰 :4211</pre>
-      <p class="hint">실시간 신호는 같은 Wi-Fi 안의 UDP로만 오갑니다(2~10ms). GitHub는 스캔 파일 저장소로만 쓰입니다: 앱이 스캔을 올리면 이 웹사이트와 언리얼이 내려받습니다.</p>
+      <p class="hint">실시간 신호는 기본적으로 같은 Wi-Fi 안의 UDP로 오갑니다(2~10ms). 같은 Wi-Fi가 안 되는 곳에서는 DigitalOcean 릴레이(WebSocket, 0.1~0.2초)를 거칩니다. GitHub는 스캔 파일 저장소로만 쓰입니다: 앱이 스캔을 올리면 이 웹사이트와 언리얼이 내려받습니다.</p>
     </section>
   </aside>
 
@@ -59,9 +68,14 @@ ESP32 (UWB + IMU) ───┤  UDP PTE1
     <div id="empty" class="empty" hidden></div>
     <div id="busy" class="busy" hidden>불러오는 중…</div>
     <div id="drop" class="drop" hidden>여기에 .ply 파일을 놓으세요</div>
-    <div class="legend"><span class="dot a"></span>A <span class="dot b"></span>B <span class="dot o"></span>사물 <span class="dot ai"></span>AI 사물</div>
+    <div id="liveHud" class="live-hud" hidden>
+      <div id="liveText">—</div>
+      <div class="bar"><div id="liveBar"></div></div>
+    </div>
+    <div class="legend"><span class="dot a"></span>A <span class="dot b"></span>B <span class="dot o"></span>사물 <span class="dot ai"></span>AI 사물 <span class="dot ph"></span>휴대폰 <span class="dot es"></span>ESP32</div>
   </main>
 
+  <script src="web/config.js"></script>
   <script type="module" src="web/app.js"></script>
 </body>
 </html>

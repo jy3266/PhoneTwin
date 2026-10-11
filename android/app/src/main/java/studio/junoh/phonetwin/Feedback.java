@@ -33,7 +33,7 @@ final class Feedback {
 
     /** When set and useRemote is on, a fresh PTH1 from Unreal (UnrealLink) replaces the locally computed values. */
     volatile UnrealLink remote; volatile boolean useRemote = false;
-    boolean remoteActive() { UnrealLink l = remote; return useRemote && l != null && l.running() && l.fresh(300); }
+    boolean remoteActive() { UnrealLink l = remote; return useRemote && l != null && l.running() && l.fresh(l.freshWindow()); }
 
     private volatile boolean espOn = false; private volatile String espHost = ""; private volatile int espPort = 4210;
     volatile String espStatus = "ESP32 꺼짐";

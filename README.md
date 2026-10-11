@@ -71,6 +71,32 @@ ARKO_PROJECT에 이미 설치·빌드되어 있습니다(`Plugins/PhoneTwinLink`
 - `DEMO_MOTION 1`이면 센서 없이 원을 그리며 걷는 위치를 보내므로, 언리얼 쪽을 먼저 시험할 수 있습니다.
 - 소리: 거리 값(`distanceMm`)과 세기(`intensity`)가 PTH1에 들어 있으니, ESP32 쪽 소리 모듈(DFPlayer 등)도 같은 값으로 제어할 수 있습니다. 언리얼 쪽 소리는 위 2-3의 `Object Sounds`.
 
+## 3-1. 인터넷 릴레이 (DigitalOcean) — 같은 Wi-Fi에 있을 수 없을 때
+
+GitHub는 실시간 신호를 못 나르므로, 실시간 신호는 DigitalOcean App Platform 위의 WebSocket 릴레이(`relay/`)로 보냅니다. App Platform은 UDP를 받지 않아 WebSocket(wss)을 씁니다.
+
+| 경로 | 장치 → 언리얼 → 진동까지 | 언제 |
+|---|---|---|
+| 같은 Wi-Fi UDP (§1) | 약 10~20 ms | **전시 현장 기본** |
+| DigitalOcean 릴레이 (싱가포르) | 약 100~200 ms (인터넷 왕복 2번) | 장치와 PC가 다른 네트워크 · 원격 시연 · 웹 실시간 보기 |
+
+언리얼은 두 경로를 동시에 받으므로 둘 다 켜 두어도 됩니다.
+
+**배포 (한 번만)**
+1. [![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/jy3266/PhoneTwin/tree/main) — `.do/deploy.template.yaml`을 읽어 `relay/`를 싱가포르 리전에 올립니다(약 $5/월).
+2. 환경 변수 `RELAY_KEY`를 아무도 모르는 긴 문자열로 바꿉니다. phone·ESP32·언리얼이 같은 값을 씁니다.
+3. 배포가 끝나면 앱 주소(`https://phonetwin-relay-xxxxx.ondigitalocean.app`)를 확인합니다. `/health`를 열면 `{"ok":true…}`가 보입니다.
+4. 저장소에 스캔이 올라올 때마다 릴레이가 재시작되지 않도록 자동 배포는 꺼 두었습니다. `relay/`를 고쳤을 때만 DigitalOcean 화면에서 **Deploy**를 누릅니다.
+
+**연결**
+- 언리얼: 프로젝트 설정 → Plugins → Phone Twin → **Relay**: URL `wss://…ondigitalocean.app`, Room `arko`, Key. HUD에 `릴레이: 연결됨 · phone=1 … · 왕복 xx ms`가 보입니다.
+- 휴대폰: 설정 9번에서 "인터넷 릴레이"를 고르고 같은 URL·방·키를 넣습니다.
+- ESP32: `USE_RELAY 1`, `RELAY_HOST`·`RELAY_KEY`를 채웁니다(Arduino 라이브러리 "WebSockets by Markus Sattler" 필요).
+- 웹 뷰어: "실시간 위치" 패널에 URL·방을 넣으면 휴대폰·ESP32 위치와 진동 세기가 3D 위에 실시간으로 보입니다(읽기 전용, 키 불필요).
+- UDP만 되는 장치는 PC에서 `node relay/bridge.js --url wss://… --key … --role esp32 --listen 7787`로 다리를 놓을 수 있습니다.
+
+언리얼 설정 주의: 언리얼은 기본적으로 WebSocket을 초당 30번만 처리해, 초당 30번 오는 위치가 밀려 지연이 몇 초까지 늘어납니다. ARKO_PROJECT의 `Config/DefaultEngine.ini`에 `[WebSockets.LibWebSockets] ThreadTargetFrameTimeInSeconds=0.002`를 넣어 두었습니다(`unreal/ARKO_PROJECT/Config/PhoneTwin_ini_snippets.ini`). 이 설정 전후로 로컬 측정에서 지연이 1.5초까지 계속 늘던 것이 30 ms 안팎으로 고정되었습니다.
+
 ## 4. 장비 없이 시험
 
 ```bat
@@ -90,6 +116,7 @@ py tools\sync_scans.py --dry-run          :: GitHub → Content/PhoneTwinScans �
 | `scans/` | 업로드된 스캔(앱이 자동으로 추가) |
 | `unreal/ARKO_PROJECT/` | 언리얼 플러그인 `PhoneTwinLink` + 프로젝트 C++ 모듈 사본 |
 | `esp32/PhoneTwinUWB/` | ESP32 UWB+IMU 송신 · 진동 수신 스케치 (`PhoneTwinHaptic/`는 v3 그대로) |
+| `relay/`, `.do/` | DigitalOcean WebSocket 릴레이(`server.js`, 시험 `test.js`, UDP 다리 `bridge.js`)와 배포 설정 |
 | `tools/` | `pose_sim.py`(장치 흉내), `sync_scans.py`(수동 동기화), `make_sample_scan.py` |
 | `windows/` | v1 Windows 모니터(선택) |
 

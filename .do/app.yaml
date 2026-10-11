@@ -1,0 +1,22 @@
+# doctl apps create --spec .do/app.yaml
+name: phonetwin-relay
+region: sgp            # Singapore: closest App Platform region to Korea
+services:
+  - name: relay
+    github:
+      repo: jy3266/PhoneTwin
+      branch: main
+      deploy_on_push: false   # scan uploads also push to main; don't restart the relay for each one
+    source_dir: relay
+    environment_slug: node-js
+    run_command: npm start
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    health_check:
+      http_path: /health
+    envs:
+      - key: RELAY_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: change-me

@@ -23,6 +23,7 @@ let cloud = null;                 // THREE.Points
 const marks = new THREE.Group();  // A/B, objects, AI rings
 scene.add(marks);
 let labels = [];                  // {pos: Vector3, el}
+let currentMeta = null;          // meta of the shown scan (a/b used to place the ESP32)
 let bounds = new THREE.Box3(new THREE.Vector3(-2, 0, -2), new THREE.Vector3(2, 2.5, 2));
 
 function resize() {
@@ -121,7 +122,7 @@ function showCloud(buffer, meta, name) {
   cloud = new THREE.Points(geom, pointMat); scene.add(cloud);
   geom.computeBoundingBox(); bounds = geom.boundingBox.clone();
   grid.position.set(bounds.getCenter(tmp).x, meta?.a ? meta.a[1] : bounds.min.y, bounds.getCenter(tmp).z);
-  addMarks(meta);
+  addMarks(meta); currentMeta = meta || null;
   setView('iso');
   $('title').textContent = name;
   const s = bounds.getSize(new THREE.Vector3());
@@ -201,3 +202,102 @@ $('menu').addEventListener('click', () => $('side').classList.toggle('open'));
 resize();
 setView('iso');
 loadIndex();
+
+// ---------------------------------------------------------------- live positions through the DigitalOcean relay (PROTOCOL.md §3)
+const live = new THREE.Group(); scene.add(live);
+function tracker(color) {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12), new THREE.MeshBasicMaterial({ color })));
+  g.add(new THREE.Mesh(new THREE.RingGeometry(0.13, 0.16, 32), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide })));
+  g.children[1].rotation.x = -Math.PI / 2;
+  g.arrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(), 0.5, color, 0.14, 0.08);
+  g.add(g.arrow); g.visible = false; live.add(g);
+  // always visible, even inside the point cloud
+  g.traverse((o) => { if (o.material) { o.material.depthTest = false; o.material.transparent = true; } o.renderOrder = 10; });
+  return g;
+}
+const phoneMark = tracker(0x22d3ee), espMark = tracker(0xe879f9);
+const state = { phoneAt: 0, espAt: 0, hapAt: 0, peers: '', espNote: '' };
+
+/** ESP32 room frame R (m, Z up, +Y left of +X, origin A, +X toward B) -> scan frame S (Y up). */
+export function roomToScan(meta, x, y, z) {
+  const up = new THREE.Vector3(0, 1, 0);
+  if (meta && Array.isArray(meta.a) && Array.isArray(meta.b)) {
+    const a = v3(meta.a), d = v3(meta.b).sub(a); d.y = 0;
+    if (d.lengthSq() > 1e-6) {
+      d.normalize();
+      const left = new THREE.Vector3(d.z, 0, -d.x);   // +90° about +Y
+      return { p: a.clone().addScaledVector(d, x).addScaledVector(left, y).addScaledVector(up, z), d, left, up, aligned: true };
+    }
+  }
+  return { p: new THREE.Vector3(x, z, -y), d: new THREE.Vector3(1, 0, 0), left: new THREE.Vector3(0, 0, -1), up, aligned: false };
+}
+
+function onLine(line) {
+  const f = line.split(',');
+  const now = performance.now();
+  if (f[0] === 'PTP1' && f.length >= 12) {
+    const n = f.slice(3, 9).map(Number);
+    if (n.some((v) => !isFinite(v))) return;
+    phoneMark.position.set(n[0], n[1], n[2]);
+    const dir = new THREE.Vector3(n[3], n[4], n[5]);
+    if (dir.lengthSq() > 1e-6) phoneMark.arrow.setDirection(dir.normalize());
+    phoneMark.visible = true; phoneMark.valid = f[2] === '1'; state.phoneAt = now;
+  } else if (f[0] === 'PTE1' && f.length >= 9) {
+    const [x, y, z, yaw, pitch] = f.slice(3, 8).map(Number);
+    if (![x, y, z].every(isFinite)) return;
+    const r = roomToScan(currentMeta, x, y, z);
+    espMark.position.copy(r.p);
+    const yr = (yaw || 0) * Math.PI / 180, pr = (pitch || 0) * Math.PI / 180;
+    const fw = r.d.clone().multiplyScalar(Math.cos(yr)).addScaledVector(r.left, Math.sin(yr)).multiplyScalar(Math.cos(pr)).addScaledVector(r.up, Math.sin(pr));
+    espMark.arrow.setDirection(fw.normalize());
+    espMark.visible = true; state.espAt = now;
+    state.espNote = r.aligned ? '' : ' (스캔에 A·B가 없어 ESP32 좌표를 그대로 표시)';
+  } else if (f[0] === 'PTH1' && f.length >= 7) {
+    const i = Math.max(0, Math.min(255, +f[3])) / 255, contact = f[4] === '1', obj = +f[5], mm = +f[6];
+    $('liveHud').hidden = false;
+    const bar = $('liveBar'); bar.style.width = `${Math.round(i * 100)}%`; bar.classList.toggle('contact', contact);
+    $('liveText').textContent = `${contact ? '▶ 접촉' : '근접'} · 세기 ${Math.round(i * 100)}% · ${mm < 0 ? '범위 밖' : (mm / 10).toFixed(1) + ' cm'}${obj > 0 ? ' · 사물 ' + obj : obj === 0 ? ' · 스캔 표면' : ''}`;
+    state.hapAt = now;
+  } else if (line.startsWith('PTR1,peers,')) state.peers = line.slice(11);
+}
+
+let ws = null, wantLive = false, retry = null, wsState = '연결 안 됨';
+function relayUrl(base, room) {
+  let b = base.trim().replace(/\/+$/, '').replace(/\/ws$/, '');
+  if (b.startsWith('https://')) b = 'wss://' + b.slice(8); else if (b.startsWith('http://')) b = 'ws://' + b.slice(7);
+  else if (!/^wss?:\/\//.test(b)) b = 'wss://' + b;
+  return `${b}/ws?room=${encodeURIComponent(room.trim() || 'arko')}&role=viewer`;
+}
+function connect() {
+  clearTimeout(retry);
+  const base = $('relayUrl').value;
+  if (!base.trim()) { wsState = '릴레이 주소를 넣으세요'; return; }
+  try { ws = new WebSocket(relayUrl(base, $('relayRoom').value)); } catch (e) { wsState = '주소 오류: ' + e.message; return; }
+  wsState = '접속 중…';
+  const me = ws;
+  ws.onopen = () => { if (me === ws) wsState = '연결됨'; };
+  ws.onmessage = (e) => { if (me === ws) String(e.data).split('\n').forEach((l) => l && onLine(l)); };
+  ws.onclose = () => {
+    if (me !== ws) return;
+    ws = null; wsState = wantLive ? '끊김 · 2초 뒤 재접속' : '연결 안 됨';
+    if (wantLive) retry = setTimeout(connect, 2000);
+  };
+}
+function save() { try { localStorage.setItem('ptRelay', JSON.stringify({ url: $('relayUrl').value, room: $('relayRoom').value })); } catch (e) { /* storage blocked */ } }
+{
+  const cfg = window.PHONETWIN_RELAY || {};
+  let saved = null; try { saved = JSON.parse(localStorage.getItem('ptRelay') || 'null'); } catch (e) { saved = null; }
+  $('relayUrl').value = (saved && saved.url) || cfg.url || '';
+  $('relayRoom').value = (saved && saved.room) || cfg.room || 'arko';
+}
+$('relayGo').addEventListener('click', () => { save(); wantLive = true; if (ws) { const o = ws; ws = null; o.close(); } connect(); });
+$('relayStop').addEventListener('click', () => { wantLive = false; clearTimeout(retry); if (ws) { const o = ws; ws = null; o.close(); } wsState = '연결 안 됨'; });
+
+setInterval(() => {
+  const now = performance.now(), age = (t) => (t ? `${Math.round(now - t)} ms 전` : '없음');
+  if (now - state.phoneAt > 3000) phoneMark.visible = false;
+  if (now - state.espAt > 3000) espMark.visible = false;
+  if (now - state.hapAt > 3000) $('liveHud').hidden = true;
+  $('relayState').textContent = `${wsState}${state.peers ? '\n접속: ' + state.peers : ''}\n휴대폰 ${age(state.phoneAt)} · ESP32 ${age(state.espAt)}${state.espNote}\n진동 세기 ${age(state.hapAt)}`;
+}, 250);

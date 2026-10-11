@@ -16,6 +16,7 @@ class UAudioComponent;
 class USoundBase;
 class FSocket;
 class SWidget;
+class IWebSocket;
 struct FPhoneTwinLoaded;
 
 UENUM(BlueprintType)
@@ -71,6 +72,10 @@ public:
 	/** Vibrate the phone even while the ESP32 is the source. */
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input")
 	bool bAlwaysVibratePhone = false;
+
+	/** Also connect to the internet relay set in Project Settings > Phone Twin > Relay (both paths work at the same time). */
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input")
+	bool bUseRelay = true;
 
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input", meta = (ClampMin = "5", ClampMax = "120"))
 	float SendRateHz = 30.f;
@@ -201,6 +206,9 @@ private:
 	struct FLink { double LastTime = -1e9; FString Address; uint32 Seq = 0; int64 Packets = 0; };
 
 	void OpenSocket();
+	void HandleLine(const FString& Line, const FString& From);
+	void ConnectRelay();
+	void TickRelay(float DeltaSeconds);
 	void Receive();
 	void SendHaptics();
 	void SendTo(const FString& Address, int32 Port, const FString& Line);
@@ -227,4 +235,9 @@ private:
 	FDelegateHandle SyncHandle;
 	TSharedPtr<SWidget> Hud;
 	TArray<TWeakObjectPtr<AActor>> HiddenActors;
+
+	TSharedPtr<IWebSocket> Relay;
+	FString RelayStatus, RelayPeers;
+	double RelayRetry = 0, RelayPing = 0;
+	TArray<double> RelayRtt;
 };

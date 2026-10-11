@@ -28,6 +28,12 @@
     DEMO_MOTION 1 이면 UWB/IMU 없이 A·B 사이 바닥 위 1.2m 높이에서 반지름 1m 원을 걷는 척합니다.
     With DEMO_MOTION 1 it fakes walking a 1 m circle, so Unreal can be tested without hardware.
 
+  인터넷 릴레이 / Internet relay (PROTOCOL.md §3, USE_RELAY 1)
+    PC와 같은 Wi-Fi에 있을 수 없을 때, 같은 줄(PTE1 / PTH1)을 DigitalOcean 릴레이(wss)로 주고받습니다.
+    When the ESP32 cannot share a Wi-Fi with the Unreal PC, the same lines travel over the DigitalOcean relay.
+    필요한 라이브러리: Arduino IDE → 라이브러리 매니저 → "WebSockets" by Markus Sattler (Links2004/arduinoWebSockets) 설치.
+    릴레이는 싱가포르를 거쳐 0.1~0.2초 늦으므로 FAILSAFE를 600ms로 늘립니다. 전시 현장에서는 UDP(USE_RELAY 0)가 기본입니다.
+
   Board: any ESP32, Arduino core 2.x or 3.x. Serial 115200 shows the IP.
 */
 #include <WiFi.h>
@@ -37,6 +43,7 @@
 // ---------------- settings ----------------
 #define USE_SOFT_AP 0                 // 1: ESP32가 "PhoneTwin-Haptic" Wi-Fi를 만듦 (PC·휴대폰이 여기에 접속, IP 192.168.4.1)
 #define DEMO_MOTION 1                 // 1: UWB/IMU 없이 원을 그리며 움직이는 가짜 위치 / 0: 실제 센서
+#define USE_RELAY   0                 // 1: 인터넷 릴레이(DigitalOcean, wss)로 주고받음 / 0: 같은 Wi-Fi UDP (빠름, 기본)
 const char* WIFI_SSID = "YOUR_WIFI";  // 2.4 GHz, PC·휴대폰과 같은 네트워크
 const char* WIFI_PASS = "YOUR_PASSWORD";
 const char* AP_SSID   = "PhoneTwin-Haptic";
@@ -47,13 +54,26 @@ const uint16_t UNREAL_PORT = 7777;
 const uint16_t UDP_PORT    = 4210;         // PTH1 수신
 const uint32_t SEND_PERIOD_MS = 33;        // ~30 Hz
 
+// USE_RELAY 1 일 때만 사용 / only with USE_RELAY 1
+const char* RELAY_HOST = "phonetwin-relay-xxxx.ondigitalocean.app";   // DigitalOcean 앱 주소 (wss:// 와 / 없이)
+const uint16_t RELAY_PORT = 443;
+const char* RELAY_ROOM = "arko";        // 휴대폰·언리얼과 같은 방 이름
+const char* RELAY_KEY  = "change-me";   // 서버의 RELAY_KEY
+
 const int  PIN_MOTOR      = 25;
 const int  PIN_BUZZER     = 26;   // -1 if not fitted
 const int  PIN_LED        = 2;
 const int  MOTOR_MIN_DUTY = 90;   // 모터가 막 돌기 시작하는 duty (0-255)
 const int  MOTOR_MAX_DUTY = 255;
-const uint32_t FAILSAFE_MS = 300;
+const uint32_t FAILSAFE_MS = USE_RELAY ? 600 : 300;   // 릴레이는 지연이 커서 더 길게
 // ------------------------------------------
+
+#if USE_RELAY
+  #include <WebSocketsClient.h>
+  WebSocketsClient relay;
+  bool relayOpen = false;
+  void relayEvent(WStype_t type, uint8_t* payload, size_t length);
+#endif
 
 WiFiUDP udp;          // PTH1 in, PTA1 out
 WiFiUDP poseUdp;      // PTE1 out
@@ -204,7 +224,28 @@ void setup() {
   unrealIp.fromString(UNREAL_IP);
   udp.begin(UDP_PORT);
   poseUdp.begin(UDP_PORT + 1);
+#if USE_RELAY
+  char path[160];
+  snprintf(path, sizeof(path), "/ws?room=%s&role=esp32&key=%s", RELAY_ROOM, RELAY_KEY);
+  relay.beginSSL(RELAY_HOST, RELAY_PORT, path);
+  relay.onEvent(relayEvent);
+  relay.setReconnectInterval(2000);
+  relay.enableHeartbeat(15000, 3000, 2);
+  Serial.printf("relay wss://%s%s%s\n", RELAY_HOST, path, DEMO_MOTION ? "  (DEMO_MOTION)" : "");
+#else
   Serial.printf("PTH1 listen :%u  ·  PTE1 → %s:%u%s\n", UDP_PORT, UNREAL_IP, UNREAL_PORT, DEMO_MOTION ? "  (DEMO_MOTION)" : "");
+#endif
+}
+
+/** One PTH1 line (from UDP or the relay) -> motor. Returns true if it was a valid PTH1. */
+bool handlePth1(const char* line) {
+  unsigned long seq; int valid, level, touch, obj, mm;
+  if (sscanf(line, "PTH1,%lu,%d,%d,%d,%d,%d", &seq, &valid, &level, &touch, &obj, &mm) != 6) return false;
+  lastPacket = millis(); lastSeq = seq;
+  intensity = valid ? constrain(level, 0, 255) : 0;
+  contact = valid && touch; objectId = obj; distanceMm = mm;
+  outputs(intensity, contact, objectId);
+  return true;
 }
 
 void receiveHaptics() {
@@ -212,16 +253,26 @@ void receiveHaptics() {
   while ((size = udp.parsePacket()) > 0) {
     char buf[96];
     int n = udp.read(buf, sizeof(buf) - 1); if (n <= 0) continue; buf[n] = 0;
-    unsigned long seq; int valid, level, touch, obj, mm;
-    if (sscanf(buf, "PTH1,%lu,%d,%d,%d,%d,%d", &seq, &valid, &level, &touch, &obj, &mm) == 6) {
-      phoneIp = udp.remoteIP(); phonePort = udp.remotePort();
-      lastPacket = millis(); lastSeq = seq;
-      intensity = valid ? constrain(level, 0, 255) : 0;
-      contact = valid && touch; objectId = obj; distanceMm = mm;
-      outputs(intensity, contact, objectId);
-    }
+    if (handlePth1(buf)) { phoneIp = udp.remoteIP(); phonePort = udp.remotePort(); }
   }
 }
+
+#if USE_RELAY
+void relayEvent(WStype_t type, uint8_t* payload, size_t length) {
+  switch (type) {
+    case WStype_CONNECTED:    relayOpen = true;  Serial.println("relay connected"); break;
+    case WStype_DISCONNECTED: relayOpen = false; Serial.println("relay disconnected (retry in 2 s)"); break;
+    case WStype_TEXT: {
+      // a frame may hold several lines
+      char buf[256]; size_t n = length < sizeof(buf) - 1 ? length : sizeof(buf) - 1;
+      memcpy(buf, payload, n); buf[n] = 0;
+      for (char* line = strtok(buf, "\n"); line; line = strtok(NULL, "\n")) handlePth1(line);
+      break;
+    }
+    default: break;
+  }
+}
+#endif
 
 void sendPose(uint32_t now) {
   if (now - lastSend < SEND_PERIOD_MS) return;
@@ -232,10 +283,17 @@ void sendPose(uint32_t now) {
   char out[128];
   int n = snprintf(out, sizeof(out), "PTE1,%lu,%d,%.3f,%.3f,%.3f,%.1f,%.1f,%.1f\n",
                    (unsigned long)++poseSeq, ok ? 1 : 0, x, y, z, yaw, pitch, roll);
+#if USE_RELAY
+  if (relayOpen) relay.sendTXT(out, n);
+#else
   poseUdp.beginPacket(unrealIp, UNREAL_PORT); poseUdp.write((const uint8_t*)out, n); poseUdp.endPacket();
+#endif
 }
 
 void loop() {
+#if USE_RELAY
+  relay.loop();
+#endif
   receiveHaptics();
   uint32_t now = millis();
   sendPose(now);
@@ -246,6 +304,15 @@ void loop() {
     int n = snprintf(out, sizeof(out), "PTA1,%lu,%d\n", (unsigned long)lastSeq, (int)WiFi.RSSI());
     udp.beginPacket(phoneIp, phonePort); udp.write((const uint8_t*)out, n); udp.endPacket();
   }
+#if USE_RELAY
+  static uint32_t lastAck = 0;
+  if (relayOpen && lastPacket && now - lastAck > 500) {   // tell Unreal (via the relay) that vibration arrives
+    lastAck = now;
+    char out[48];
+    int n = snprintf(out, sizeof(out), "PTA1,%lu,%d\n", (unsigned long)lastSeq, (int)WiFi.RSSI());
+    relay.sendTXT(out, n);
+  }
+#endif
   static uint32_t lastLog = 0;
   if (now - lastLog > 1000) { lastLog = now; Serial.printf("pose seq %lu · haptic seq %lu  intensity %d  contact %d  obj %d  dist %d mm\n", (unsigned long)poseSeq, (unsigned long)lastSeq, intensity, contact, objectId, distanceMm); }
   delay(1);
