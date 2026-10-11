@@ -1,0 +1,16 @@
+# Android build
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.iml
+# APK is attached to GitHub Releases instead
+install/
+# Python
+__pycache__/
+*.pyc
+windows/.venv/
+# Unreal (only plugin/project source is kept here)
+unreal/**/Binaries/
+unreal/**/Intermediate/

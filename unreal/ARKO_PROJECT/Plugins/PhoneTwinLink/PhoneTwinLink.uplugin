@@ -1,0 +1,17 @@
+{
+	"FileVersion": 3,
+	"Version": 4,
+	"VersionName": "0.4.0",
+	"FriendlyName": "Phone Twin Link",
+	"Description": "Loads Phone Twin scans (GitHub sync or Content/PhoneTwinScans), receives phone (PTP1) and ESP32 UWB+IMU (PTE1) poses over UDP, measures distance to the scanned space and drives vibration (PTH1) and sound.",
+	"Category": "Phone Twin",
+	"CreatedBy": "Phone Twin",
+	"CanContainContent": false,
+	"Modules": [
+		{ "Name": "PhoneTwinLink", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "PhoneTwinLinkEditor", "Type": "Editor", "LoadingPhase": "PostEngineInit" }
+	],
+	"Plugins": [
+		{ "Name": "LidarPointCloud", "Enabled": true }
+	]
+}

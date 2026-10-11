@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phone Twin 스캔 뷰어</title>
+  <meta name="description" content="휴대폰으로 스캔한 3D 공간(포인트 클라우드)을 웹에서 봅니다.">
+  <link rel="stylesheet" href="web/style.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <header class="top">
+    <button id="menu" class="icon" aria-label="스캔 목록 열기">☰</button>
+    <h1>PHONE TWIN <span>· 스캔 뷰어</span></h1>
+    <span id="title" class="scan-title"></span>
+  </header>
+
+  <aside id="side" class="side">
+    <section>
+      <h2>스캔 목록</h2>
+      <ul id="list" class="list"><li class="muted">불러오는 중…</li></ul>
+      <p class="hint">로컬 .ply 파일을 화면에 끌어다 놓아도 볼 수 있습니다.</p>
+      <label class="file">로컬 PLY 열기<input id="file" type="file" accept=".ply"></label>
+    </section>
+
+    <section>
+      <h2>보기</h2>
+      <div class="buttons">
+        <button data-view="top">위에서 보기</button>
+        <button data-view="iso">비스듬히</button>
+        <button data-view="reset">초기화</button>
+      </div>
+      <label class="slider">점 크기 <input id="size" type="range" min="1" max="12" step="0.5" value="3"><output id="sizeOut">3</output></label>
+      <label class="check"><input id="showMarks" type="checkbox" checked> A·B, 사물 표시</label>
+      <a id="download" class="download" href="#" download hidden>PLY 다운로드</a>
+      <div id="info" class="info muted"></div>
+    </section>
+
+    <section>
+      <h2>실시간 연동 구조</h2>
+      <pre class="diagram">휴대폰 (ARCore 위치) ─┐  UDP PTP1
+ESP32 (UWB + IMU) ───┤  UDP PTE1
+                     ▼  같은 Wi-Fi, :7777
+               언리얼 ARKO_PROJECT
+            거리 계산 · 소리 · 진동 세기
+                     │  UDP PTH1
+     ESP32 :4210 ◀───┴───▶ 휴대폰 :4211</pre>
+      <p class="hint">실시간 신호는 같은 Wi-Fi 안의 UDP로만 오갑니다(2~10ms). GitHub는 스캔 파일 저장소로만 쓰입니다: 앱이 스캔을 올리면 이 웹사이트와 언리얼이 내려받습니다.</p>
+    </section>
+  </aside>
+
+  <main id="stage" class="stage">
+    <div id="labels" class="labels"></div>
+    <div id="empty" class="empty" hidden></div>
+    <div id="busy" class="busy" hidden>불러오는 중…</div>
+    <div id="drop" class="drop" hidden>여기에 .ply 파일을 놓으세요</div>
+    <div class="legend"><span class="dot a"></span>A <span class="dot b"></span>B <span class="dot o"></span>사물 <span class="dot ai"></span>AI 사물</div>
+  </main>
+
+  <script type="module" src="web/app.js"></script>
+</body>
+</html>
