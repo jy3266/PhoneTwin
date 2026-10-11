@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.request
 
-DEFAULT_DEST = 'C:/Users/ujo21/OneDrive/Desktop/PhoneTwin/ARKO_PROJECT/Content/PhoneTwinScans'
+DEFAULT_DEST = 'C:/Users/ujo21/OneDrive/Desktop/PhoneTwin/ARKO_PROJECT/PhoneTwinScans'
 
 
 def api_get(repo, branch, path, token, want_json=False):

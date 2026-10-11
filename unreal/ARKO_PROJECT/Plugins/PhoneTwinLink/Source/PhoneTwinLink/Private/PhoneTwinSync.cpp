@@ -11,7 +11,24 @@ DEFINE_LOG_CATEGORY_STATIC(LogPhoneTwinSync, Log, All);
 
 FString UPhoneTwinSettings::ScanDir()
 {
-	return FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir() / TEXT("PhoneTwinScans"));
+	// Raw downloads live next to Content, not inside it: the editor's auto-import would otherwise try to turn
+	// every .json into a DataTable. The point cloud assets made from them go to /Game/PhoneTwinScans.
+	return FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("PhoneTwinScans"));
+}
+
+void UPhoneTwinSettings::MigrateOldScanDir()
+{
+	// v4.0 kept raw files in Content/PhoneTwinScans; move them out once (uassets stay).
+	const FString Old = FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir() / TEXT("PhoneTwinScans")), New = ScanDir();
+	IFileManager& FM = IFileManager::Get();
+	FM.MakeDirectory(*New, true);
+	for (const TCHAR* Pattern : { TEXT("*.ply"), TEXT("*.json") })
+	{
+		TArray<FString> Files; FM.FindFiles(Files, *(Old / Pattern), true, false);
+		for (const FString& F : Files)
+			if (!FM.FileExists(*(New / F))) FM.Move(*(New / F), *(Old / F), true, true);
+			else FM.Delete(*(Old / F));
+	}
 }
 
 FPhoneTwinSync& FPhoneTwinSync::Get()

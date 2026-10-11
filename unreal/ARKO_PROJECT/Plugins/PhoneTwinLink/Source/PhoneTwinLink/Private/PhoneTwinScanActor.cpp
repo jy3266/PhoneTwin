@@ -60,7 +60,7 @@ static FAutoConsoleCommandWithWorldAndArgs GPhoneTwinFollowCmd(TEXT("PhoneTwin.F
 	{
 		if (World) for (TActorIterator<APhoneTwinScanActor> It(World); It; ++It) It->SetFollowTracker(!It->bFollowTracker);
 	}));
-static FAutoConsoleCommandWithWorldAndArgs GPhoneTwinNextCmd(TEXT("PhoneTwin.NextScan"), TEXT("Show the next scan in Content/PhoneTwinScans"),
+static FAutoConsoleCommandWithWorldAndArgs GPhoneTwinNextCmd(TEXT("PhoneTwin.NextScan"), TEXT("Show the next scan in <Project>/PhoneTwinScans"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>&, UWorld* World)
 	{
 		if (World) for (TActorIterator<APhoneTwinScanActor> It(World); It; ++It) It->LoadNextScan();
@@ -527,7 +527,7 @@ FString APhoneTwinScanActor::HudText() const
 void APhoneTwinScanActor::LoadNextScan()
 {
 	const TArray<FPhoneTwinLocalScan> L = FPhoneTwinSync::LocalScans();
-	if (L.Num() == 0) { ScanStatus = TEXT("Content/PhoneTwinScans 에 스캔이 없습니다"); return; }
+	if (L.Num() == 0) { ScanStatus = TEXT("ARKO_PROJECT/PhoneTwinScans 에 스캔이 없습니다"); return; }
 	int32 i = L.IndexOfByPredicate([this](const FPhoneTwinLocalScan& S) { return S.Id == LoadedScanId; });
 	ScanId = L[(i + 1) % L.Num()].Id;
 	LoadScan(ScanId);
@@ -538,7 +538,7 @@ void APhoneTwinScanActor::LoadScan(const FString& Id)
 	if (bLoading) return;
 	const TArray<FPhoneTwinLocalScan> L = FPhoneTwinSync::LocalScans();
 	const FPhoneTwinLocalScan* Scan = Id.IsEmpty() ? (L.Num() ? &L[0] : nullptr) : L.FindByPredicate([&Id](const FPhoneTwinLocalScan& S) { return S.Id == Id; });
-	if (!Scan) { ScanStatus = Id.IsEmpty() ? TEXT("Content/PhoneTwinScans 에 스캔이 없습니다 (GitHub 동기화 대기)") : FString::Printf(TEXT("%s 없음"), *Id); return; }
+	if (!Scan) { ScanStatus = Id.IsEmpty() ? TEXT("ARKO_PROJECT/PhoneTwinScans 에 스캔이 없습니다 (GitHub 동기화 대기)") : FString::Printf(TEXT("%s 없음"), *Id); return; }
 	if (Scan->Id == LoadedScanId) return;
 	bLoading = true; ScanStatus = FString::Printf(TEXT("불러오는 중: %s"), *Scan->Id);
 

@@ -84,8 +84,8 @@ scans/<id>.json     메타데이터
 ### 흐름
 1. 휴대폰 앱: 스캔 완료 → (설정에 GitHub 저장소·토큰이 있으면) PLY·JSON·index.json을 한 커밋으로 올림.
 2. GitHub Pages가 main 브랜치 루트(index.html + web/ + scans/)를 그대로 배포 → 웹 뷰어에서 바로 보임.
-3. 언리얼 플러그인: 시작할 때와 90초마다 `scans/index.json`을 확인 → 새 스캔을 `ARKO_PROJECT/Content/PhoneTwinScans/`로 내려받고 → 가장 최근(또는 고른) 스캔을 띄움.
-   PC에서 직접 `Content/PhoneTwinScans/`에 PLY를 넣어도 됩니다.
+3. 언리얼 플러그인: 시작할 때와 90초마다 `scans/index.json`을 확인 → 새 스캔을 `ARKO_PROJECT/PhoneTwinScans/`로 내려받고(Content 밖: 에디터 자동 가져오기가 .json을 DataTable로 바꾸려 하지 않도록), 에디터는 `/Game/PhoneTwinScans/<id>_Cloud` 포인트클라우드 에셋을 만들고 → 가장 최근(또는 고른) 스캔을 띄움.
+   PC에서 직접 `ARKO_PROJECT/PhoneTwinScans/`에 PLY를 넣어도 됩니다.
 
 ## 3. 인터넷 릴레이 (DigitalOcean App Platform, WebSocket)
 

@@ -1,4 +1,4 @@
-// Phone Twin v4 — project settings and the GitHub -> Content/PhoneTwinScans downloader.
+// Phone Twin v4 — project settings and the GitHub -> <Project>/PhoneTwinScans downloader.
 #pragma once
 
 #include "CoreMinimal.h"
@@ -21,7 +21,7 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "GitHub")
 	FString Branch = TEXT("main");
 
-	/** Check GitHub for new scans while the editor is open and download them into Content/PhoneTwinScans. */
+	/** Check GitHub for new scans while the editor is open and download them into <Project>/PhoneTwinScans. */
 	UPROPERTY(config, EditAnywhere, Category = "GitHub")
 	bool bAutoSyncInEditor = true;
 
@@ -32,7 +32,7 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "GitHub", meta = (ClampMin = "1"))
 	int32 MaxScansToDownload = 10;
 
-	/** Also turn every PLY in Content/PhoneTwinScans into a LiDAR Point Cloud asset (/Game/PhoneTwinScans/<id>_Cloud), aligned like the game view. */
+	/** Also turn every PLY in <Project>/PhoneTwinScans into a LiDAR Point Cloud asset (/Game/PhoneTwinScans/<id>_Cloud), aligned like the game view. */
 	UPROPERTY(config, EditAnywhere, Category = "Editor")
 	bool bCreatePointCloudAssets = true;
 
@@ -51,10 +51,12 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Relay", meta = (PasswordField = true))
 	FString RelayKey;
 
+	/** ARKO_PROJECT/PhoneTwinScans: raw .ply/.json scans (outside Content on purpose). */
 	static FString ScanDir();
+	static void MigrateOldScanDir();
 };
 
-/** A scan available on this PC (Content/PhoneTwinScans/<id>.ply [+ <id>.json]). */
+/** A scan available on this PC (<Project>/PhoneTwinScans/<id>.ply [+ <id>.json]). */
 struct FPhoneTwinLocalScan { FString Id, PlyPath, MetaPath; FDateTime Time; };
 
 /** Process-wide singleton: one sync at a time, shared by the editor subsystem and the game actor. */

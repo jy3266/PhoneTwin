@@ -11,7 +11,7 @@
                  ┌──────────── GitHub (jy3266/PhoneTwin) ─────────────┐
  휴대폰 v4 ──스캔 업로드──▶ scans/*.ply·json ──────▶ GitHub Pages 웹 뷰어
      │                         │
-     │                         └──자동 내려받기──▶ ARKO_PROJECT/Content/PhoneTwinScans (+ 포인트클라우드 에셋)
+     │                         └──자동 내려받기──▶ ARKO_PROJECT/PhoneTwinScans → Content 포인트클라우드 에셋
      │
      │  같은 Wi-Fi · UDP (2~10 ms)
      ├── PTP1 위치·방향 ─────────▶ 언리얼 :7777 ◀──────── PTE1 UWB 위치 + IMU ── ESP32
@@ -26,7 +26,7 @@
 | 화각이 좁아지는 문제, 넓은 렌즈 | ① ARCore가 허용하는 카메라 설정 중 **수평 화각이 가장 넓은 것**을 자동 선택(설정 0번에 화각°·렌즈 ID 표시). ② 스캔 중에는 카메라 영상을 **잘라내지 않고 전체를 표시**(위아래 검은 띠). 세로 화면에서 좌우로 약 1.6배 넓게 보입니다. ③ 깊이 모드를 켤 때 카메라 설정이 바뀌면 원래 설정으로 되돌립니다. |
 | 스캔 정밀도 | 점 간격 2.5 → **1.5 cm**, 같은 칸의 측정값을 **신뢰도·거리 가중 평균**(한 번 찍힌 값이 아니라 여러 번의 평균), **2번 이상 관측된 칸만 저장**, 깊이 경계의 떠다니는 점 제거, 너무 빨리 움직인 프레임 제외, 깊이 픽셀 전부 사용, 최대 80만 점. |
 | 웹 연동 · GitHub | 앱 설정 8번에서 스캔을 GitHub에 한 커밋으로 업로드 → GitHub Pages 웹 뷰어에서 3D로 보기(A·B, 사물, AI 사물 이름표 포함). |
-| 언리얼 자동 반입 | ARKO_PROJECT에 C++ 플러그인 `PhoneTwinLink` 추가. 에디터가 켜져 있으면 90초마다 GitHub를 확인해 새 스캔을 `Content/PhoneTwinScans/`로 받고 **LiDAR 포인트클라우드 에셋**(`/Game/PhoneTwinScans/<id>_Cloud`)을 만듭니다. Play를 누르면 가장 최근 스캔이 자동으로 뜹니다. |
+| 언리얼 자동 반입 | ARKO_PROJECT에 C++ 플러그인 `PhoneTwinLink` 추가. 에디터가 켜져 있으면 90초마다 GitHub를 확인해 새 스캔(.ply/.json)을 `ARKO_PROJECT/PhoneTwinScans/`로 받고, Content 안에는 **LiDAR 포인트클라우드 에셋**(`/Game/PhoneTwinScans/<id>_Cloud`)을 만듭니다. Play를 누르면 가장 최근 스캔이 자동으로 뜹니다. |
 | 휴대폰 ↔ ESP32 스위치 | 언리얼 화면 왼쪽 위 패널의 **[1] 휴대폰 / [2] ESP32** 버튼(키보드 1·2)으로 위치 입력 장치를 바꿉니다. |
 | 거리 → 진동·소리 | 언리얼이 매 프레임 손(장치) 위치에서 가장 가까운 스캔 표면·사물까지 거리를 재고, 30 Hz로 진동 세기를 ESP32·휴대폰에 보냅니다. 사물마다 직접 만든 소리를 지정하면 가까워질수록 커집니다. |
 | 블루투스 vs 웹, 가장 빠른 방식 | **같은 Wi-Fi 안의 UDP**를 선택했습니다(2~10 ms). BLE는 Windows에서 15~50 ms, 인터넷 경유 웹은 50~200 ms 이상입니다. GitHub는 실시간 신호에 쓸 수 없고 **스캔 파일 저장·공유 전용**입니다. 자세한 비교는 PROTOCOL.md §1. |
@@ -103,7 +103,7 @@ GitHub는 실시간 신호를 못 나르므로, 실시간 신호는 DigitalOcean
 :: 언리얼에서 Play 한 상태로
 py tools\pose_sim.py --target 127.0.0.1 --mode phone --meta scans\sample_test_room.json
 py tools\pose_sim.py --target 127.0.0.1 --mode esp32 --meta scans\sample_test_room.json   :: 언리얼에서 [2] ESP32 선택
-py tools\sync_scans.py --dry-run          :: GitHub → Content/PhoneTwinScans 수동 동기화
+py tools\sync_scans.py --dry-run          :: GitHub → ARKO_PROJECT/PhoneTwinScans 수동 동기화
 ```
 `scans/sample_test_room.*`은 PC에서 만든 시험용 가상 방(4.5 × 3.6 m, 빨간 구 = 사물 1, 의자 = AI 사물)입니다.
 

@@ -1,5 +1,5 @@
 // Phone Twin v4 — the scanned space inside Unreal.
-//  * shows the newest scan from Content/PhoneTwinScans (downloaded from GitHub) as a point cloud
+//  * shows the newest scan from <Project>/PhoneTwinScans (downloaded from GitHub) as a point cloud
 //  * receives the phone pose (PTP1) and the ESP32 UWB+IMU pose (PTE1) on UDP 7777; a switch picks the source
 //  * measures the distance from the tracked hand to the scanned surfaces / objects every frame
 //  * sends vibration strength (PTH1) back to the ESP32 (4210) and the phone (4211), and plays per-object sounds
@@ -36,7 +36,7 @@ public:
 	APhoneTwinScanActor();
 
 	// ---------------------------------------------------------------- scan
-	/** Scan to show (file name without .ply in Content/PhoneTwinScans). Empty = always the newest. */
+	/** Scan to show (file name without .ply in <Project>/PhoneTwinScans). Empty = always the newest. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Scan")
 	FString ScanId;
 

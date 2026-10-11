@@ -1,4 +1,4 @@
-// Editor side: keeps Content/PhoneTwinScans in sync with GitHub while the editor is open and turns every
+// Editor side: keeps <Project>/PhoneTwinScans in sync with GitHub while the editor is open and turns every
 // scan PLY there into a LiDAR Point Cloud asset (/Game/PhoneTwinScans/<id>_Cloud) you can drag into a level.
 #include "Modules/ModuleManager.h"
 #include "Containers/Ticker.h"
@@ -21,11 +21,12 @@ class FPhoneTwinLinkEditorModule : public IModuleInterface
 public:
 	virtual void StartupModule() override
 	{
+		UPhoneTwinSettings::MigrateOldScanDir();
 		SyncHandle = FPhoneTwinSync::Get().OnSynced.AddRaw(this, &FPhoneTwinLinkEditorModule::OnSynced);
 		Ticker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &FPhoneTwinLinkEditorModule::Tick), 5.f);
-		Commands.Add(IConsoleManager::Get().RegisterConsoleCommand(TEXT("PhoneTwin.Sync"), TEXT("Download new scans from GitHub into Content/PhoneTwinScans"),
+		Commands.Add(IConsoleManager::Get().RegisterConsoleCommand(TEXT("PhoneTwin.Sync"), TEXT("Download new scans from GitHub into <Project>/PhoneTwinScans"),
 			FConsoleCommandDelegate::CreateLambda([]() { FPhoneTwinSync::Get().Run(); })));
-		Commands.Add(IConsoleManager::Get().RegisterConsoleCommand(TEXT("PhoneTwin.ImportAll"), TEXT("Create/refresh point cloud assets for every PLY in Content/PhoneTwinScans"),
+		Commands.Add(IConsoleManager::Get().RegisterConsoleCommand(TEXT("PhoneTwin.ImportAll"), TEXT("Create/refresh point cloud assets for every PLY in <Project>/PhoneTwinScans"),
 			FConsoleCommandDelegate::CreateLambda([this]() { ImportMissing(true); })));
 	}
 	virtual void ShutdownModule() override
