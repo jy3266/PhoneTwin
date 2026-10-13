@@ -1,0 +1,60 @@
+# Builds the iPhone app on a GitHub macOS runner (no Mac needed locally):
+# unit tests on the simulator, then an unsigned PhoneTwin-iOS-v4.ipa (install with Sideloadly / AltStore, which sign it with your Apple ID).
+name: iOS app
+
+on:
+  push:
+    branches: [main]
+    paths: ['ios/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Unit tests (simulator)
+        working-directory: ios
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          echo "simulator $UDID"
+          if ! xcodebuild test -project PhoneTwin.xcodeproj -scheme PhoneTwin -destination "id=$UDID" CODE_SIGNING_ALLOWED=NO > test.log 2>&1; then
+            grep -E "error:|failed|FAIL" test.log | head -150
+            tail -80 test.log
+            exit 1
+          fi
+          grep -E "Test Case .*(passed|failed)|Executed" test.log | tail -40
+
+      - name: Build unsigned IPA
+        working-directory: ios
+        run: |
+          if ! xcodebuild -project PhoneTwin.xcodeproj -scheme PhoneTwin -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+               -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1; then
+            grep -E "error:" build.log | head -150
+            tail -80 build.log
+            exit 1
+          fi
+          rm -rf Payload && mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/PhoneTwin.app Payload/
+          zip -qry PhoneTwin-iOS-v4.ipa Payload
+          ls -l PhoneTwin-iOS-v4.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhoneTwin-iOS-v4
+          path: ios/PhoneTwin-iOS-v4.ipa
+          if-no-files-found: error
