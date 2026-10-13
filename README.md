@@ -18,6 +18,41 @@
      ◀── PTH1 진동 세기 (:4211) ──┤  거리 계산 · 소리 재생 ├── PTH1 진동 세기 (:4210) ──▶ ESP32 진동 모터
 ```
 
+## 0. 앱 설치 (안드로이드 · 아이폰)
+
+| | 안드로이드 | 아이폰 |
+|---|---|---|
+| 설치 파일 | [`install/PhoneTwin-Android-v4.apk`](https://github.com/jy3266/PhoneTwin/raw/main/install/PhoneTwin-Android-v4.apk) | [`install/PhoneTwin-iOS-v4.ipa`](https://github.com/jy3266/PhoneTwin/raw/main/install/PhoneTwin-iOS-v4.ipa) |
+| 다른 받는 곳 | [Releases v0.4.0](https://github.com/jy3266/PhoneTwin/releases/tag/v0.4.0) | [Releases v0.4.0](https://github.com/jy3266/PhoneTwin/releases/tag/v0.4.0) |
+| 필요한 것 | Android 8.0 이상, ARCore 지원 기종 | iOS 16 이상 iPhone, Windows PC + USB 케이블 + Apple ID |
+| 설치 방법 | 휴대폰에서 APK를 받아 바로 설치 | PC에서 Sideloadly로 설치 (Mac 필요 없음) |
+| 유지 | 한 번 설치하면 끝 | 무료 Apple ID는 **7일마다 다시 설치** |
+| 스캔 | Depth API 지원 기종은 컬러 고밀도 | LiDAR 있는 Pro 모델은 컬러 고밀도, 그 외는 성김 |
+
+### 안드로이드
+
+1. 휴대폰 브라우저에서 위 표의 **APK 링크**를 열어 내려받습니다(또는 PC에서 받아 USB로 휴대폰에 복사).
+2. 내려받은 `PhoneTwin-Android-v4.apk`를 누릅니다. "출처를 알 수 없는 앱" 경고가 나오면 **설정 → 이 출처 허용**을 켜고 돌아와 **설치**를 누릅니다.
+3. 앱 이름은 **Phone Twin v4**입니다. 예전 v3 앱과 따로 설치되므로 v3를 지울 필요가 없습니다.
+4. 처음 실행하면 **카메라 권한**을 허용합니다. "Google Play 서비스 AR(ARCore)" 설치·업데이트 화면이 나오면 설치합니다.
+5. 새 버전이 나오면 같은 방법으로 덮어 설치하면 됩니다(스캔·설정은 그대로 남음).
+
+### 아이폰 (Windows PC에서 Sideloadly로)
+
+App Store에 올린 앱이 아니라서, 내 Apple ID로 서명해 직접 설치합니다.
+
+1. **PC 준비:** Windows에 **iTunes**(Microsoft Store 버전이 아닌 [Apple 웹사이트 버전](https://www.apple.com/kr/itunes/))와 **[Sideloadly](https://sideloadly.io/)**를 설치합니다.
+2. PC에서 위 표의 **IPA 링크**로 `PhoneTwin-iOS-v4.ipa`를 내려받습니다.
+3. 아이폰을 USB로 PC에 연결하고, 아이폰에 "이 컴퓨터를 신뢰하겠습니까?"가 나오면 **신뢰**를 누릅니다.
+4. Sideloadly를 열고 IPA 파일을 창에 끌어다 놓습니다. 위쪽에서 연결된 아이폰을 고르고 **Apple account**에 Apple ID를 넣은 뒤 **Start**를 누릅니다(Apple ID 암호, 2단계 인증 코드를 물으면 입력).
+5. "Done"이 나오면 아이폰에서:
+   - 설정 → 일반 → **VPN 및 기기 관리** → 내 Apple ID → **신뢰**
+   - 설정 → 개인정보 보호 및 보안 → **개발자 모드** 켜기 → 아이폰 재시동 후 "켜기" 확인
+6. **Phone Twin v4** 앱을 열고 **카메라**를 허용합니다. 언리얼·ESP32로 처음 보낼 때 나오는 **로컬 네트워크** 접근도 허용합니다.
+7. **7일 뒤 앱이 열리지 않으면** 3~4번을 다시 하면 됩니다(스캔·설정은 남음). 유료 Apple 개발자 계정($99/년)으로 설치하면 1년 동안 유지됩니다.
+
+> 두 앱은 같은 스캔 파일·GitHub 저장소·언리얼·ESP32 신호를 씁니다. 안드로이드에서 찍어 올린 스캔을 아이폰에서 불러오거나 그 반대도 됩니다.
+
 ## v4에서 바뀐 것
 
 | 요청 | 구현 |
@@ -37,7 +72,7 @@
 >
 > **GitHub에 올린 스캔 다시 불러오기:** 설정 1번 또는 8번의 **☁ GitHub에 올린 스캔 불러오기…** → 목록(최신이 위)에서 고르면 스캔·A·B·사물·AI 사물이 함께 내려옵니다. 다른 장소에서 2번의 **현장 A·B**를 기록하면 그 스캔이 이 장소에 겹쳐지고, 정렬 결과의 "스캔 A–B / 현장 A–B · 차이 %"와 **AR 겹쳐보기**로 두 공간의 크기를 비교할 수 있습니다(크기 비교 때는 "스케일 보정"을 끄세요). 공개 저장소는 토큰 없이 읽습니다.
 
-1. `install/PhoneTwin-Android-v4.apk`(또는 GitHub Releases)를 설치합니다(v3와 함께 설치됨). iPhone은 아래 1-1.
+1. 앱을 설치합니다 — 안드로이드·아이폰 모두 위 **0. 앱 설치** 참고.
 2. 스캔: 설정 ▼ → **0 · 스캔 시작** → 전체화면에서 벽·가구를 0.5~3 m 거리에서 천천히 훑기 → **완료·저장**.
    - 너무 빨리 움직이면 그 프레임은 버립니다. 천천히 돌수록 정밀해집니다.
    - "관측 횟수"를 3으로 올리면 잡음이 더 줄고, 1로 내리면 점이 늘어납니다.
@@ -52,11 +87,7 @@
 
 안드로이드 앱과 같은 기능의 iPhone 버전입니다(Swift · ARKit). 스캔 파일(PLY)·GitHub 스캔·언리얼(PTP1/PTH1)·ESP32 신호가 모두 같아서 웹·언리얼·ESP32는 그대로 씁니다.
 
-- **설치 (Mac 없이, Windows에서):** `install/PhoneTwin-iOS-v4.ipa`를 받아 [Sideloadly](https://sideloadly.io/)로 설치합니다.
-  1. Windows에 iTunes(Apple 웹사이트 버전)와 Sideloadly를 설치하고 iPhone을 USB로 연결합니다.
-  2. Sideloadly에 IPA를 끌어 놓고 Apple ID를 넣어 Start.
-  3. iPhone 설정 → 일반 → VPN 및 기기 관리에서 내 Apple ID를 신뢰하고, 설정 → 개인정보 보호 및 보안 → **개발자 모드**를 켭니다.
-  - 무료 Apple ID로 설치하면 **7일마다 다시 설치**해야 합니다(유료 개발자 계정이면 1년).
+- **설치:** 위 **0. 앱 설치 → 아이폰** 참고 (Windows PC + Sideloadly, Mac 필요 없음).
 - **스캔:** LiDAR가 있는 iPhone(Pro 모델)은 컬러 고밀도 스캔, 그 외 기종은 특징점 스캔(성김)입니다.
 - **다른 점:** AI 사물 인식은 안드로이드 앱만 합니다(인식된 사물은 GitHub 스캔을 불러오면 함께 들어와 소리가 납니다). 7번 Windows 모니터는 없습니다. ESP32에는 브로드캐스트 주소(x.x.x.255) 대신 실제 IP를 넣으세요. 처음 송신할 때 "로컬 네트워크" 접근을 허용하세요.
 - **빌드:** `ios/`를 고쳐 push하면 GitHub Actions(`.github/workflows/ios.yml`)가 macOS에서 단위 테스트 후 IPA를 만듭니다(Actions 실행 결과의 Artifacts). Mac이 있으면 `brew install xcodegen && cd ios && xcodegen generate` 후 Xcode로 열어도 됩니다.
