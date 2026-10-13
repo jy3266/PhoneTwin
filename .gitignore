@@ -5,8 +5,7 @@ android/app/build/
 android/local.properties
 android/.idea/
 *.iml
-# APK is attached to GitHub Releases instead
-install/
+# APK is committed under install/ and also attached to GitHub Releases
 # Python
 __pycache__/
 *.pyc
