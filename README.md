@@ -37,7 +37,7 @@
 >
 > **GitHub에 올린 스캔 다시 불러오기:** 설정 1번 또는 8번의 **☁ GitHub에 올린 스캔 불러오기…** → 목록(최신이 위)에서 고르면 스캔·A·B·사물·AI 사물이 함께 내려옵니다. 다른 장소에서 2번의 **현장 A·B**를 기록하면 그 스캔이 이 장소에 겹쳐지고, 정렬 결과의 "스캔 A–B / 현장 A–B · 차이 %"와 **AR 겹쳐보기**로 두 공간의 크기를 비교할 수 있습니다(크기 비교 때는 "스케일 보정"을 끄세요). 공개 저장소는 토큰 없이 읽습니다.
 
-1. GitHub Releases의 `PhoneTwin-Android-v4.apk`를 설치합니다(v3와 함께 설치됨).
+1. `install/PhoneTwin-Android-v4.apk`(또는 GitHub Releases)를 설치합니다(v3와 함께 설치됨). iPhone은 아래 1-1.
 2. 스캔: 설정 ▼ → **0 · 스캔 시작** → 전체화면에서 벽·가구를 0.5~3 m 거리에서 천천히 훑기 → **완료·저장**.
    - 너무 빨리 움직이면 그 프레임은 버립니다. 천천히 돌수록 정밀해집니다.
    - "관측 횟수"를 3으로 올리면 잡음이 더 줄고, 1로 내리면 점이 늘어납니다.
@@ -47,6 +47,19 @@
    - 1~2분 뒤 웹 뷰어에 나타나고, 언리얼 에디터에는 다음 확인 주기(최대 90초)에 들어옵니다.
    - 토큰은 휴대폰 안에만 저장됩니다. 토큰을 코드나 저장소에 넣지 마세요.
 4. **9 · 언리얼 연동**: PC의 IPv4(명령 프롬프트 `ipconfig`)를 넣고 **송신 시작**. "언리얼이 계산한 진동 사용"을 켜면 언리얼 값으로 진동합니다(신호가 끊기면 휴대폰 자체 계산으로 돌아감).
+
+## 1-1. iPhone 앱 (`ios/`)
+
+안드로이드 앱과 같은 기능의 iPhone 버전입니다(Swift · ARKit). 스캔 파일(PLY)·GitHub 스캔·언리얼(PTP1/PTH1)·ESP32 신호가 모두 같아서 웹·언리얼·ESP32는 그대로 씁니다.
+
+- **설치 (Mac 없이, Windows에서):** `install/PhoneTwin-iOS-v4.ipa`를 받아 [Sideloadly](https://sideloadly.io/)로 설치합니다.
+  1. Windows에 iTunes(Apple 웹사이트 버전)와 Sideloadly를 설치하고 iPhone을 USB로 연결합니다.
+  2. Sideloadly에 IPA를 끌어 놓고 Apple ID를 넣어 Start.
+  3. iPhone 설정 → 일반 → VPN 및 기기 관리에서 내 Apple ID를 신뢰하고, 설정 → 개인정보 보호 및 보안 → **개발자 모드**를 켭니다.
+  - 무료 Apple ID로 설치하면 **7일마다 다시 설치**해야 합니다(유료 개발자 계정이면 1년).
+- **스캔:** LiDAR가 있는 iPhone(Pro 모델)은 컬러 고밀도 스캔, 그 외 기종은 특징점 스캔(성김)입니다.
+- **다른 점:** AI 사물 인식은 안드로이드 앱만 합니다(인식된 사물은 GitHub 스캔을 불러오면 함께 들어와 소리가 납니다). 7번 Windows 모니터는 없습니다. ESP32에는 브로드캐스트 주소(x.x.x.255) 대신 실제 IP를 넣으세요. 처음 송신할 때 "로컬 네트워크" 접근을 허용하세요.
+- **빌드:** `ios/`를 고쳐 push하면 GitHub Actions(`.github/workflows/ios.yml`)가 macOS에서 단위 테스트 후 IPA를 만듭니다(Actions 실행 결과의 Artifacts). Mac이 있으면 `brew install xcodegen && cd ios && xcodegen generate` 후 Xcode로 열어도 됩니다.
 
 ## 2. 언리얼 (ARKO_PROJECT)
 
