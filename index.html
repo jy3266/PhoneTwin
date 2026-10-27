@@ -17,6 +17,7 @@
   <header class="top">
     <button id="menu" class="icon" aria-label="스캔 목록 열기">☰</button>
     <h1>PHONE TWIN <span>· 스캔 뷰어</span></h1>
+    <span id="liveDot" class="live-dot off" title="실시간 연결 (초록 = 움직임 수신 중)"></span>
     <span id="title" class="scan-title"></span>
   </header>
 
@@ -46,8 +47,9 @@
       <label class="field">릴레이 주소<input id="relayUrl" type="text" placeholder="wss://phonetwin-relay-xxxx.ondigitalocean.app" autocomplete="off" spellcheck="false"></label>
       <label class="field">방 이름<input id="relayRoom" type="text" value="arko" autocomplete="off" spellcheck="false"></label>
       <div class="buttons"><button id="relayGo">연결</button><button id="relayStop">끊기</button></div>
+      <label class="check"><input id="followAud" type="checkbox"> 관객 따라가기 (카메라)</label>
       <div id="relayState" class="info muted">연결 안 됨</div>
-      <p class="hint">DigitalOcean 릴레이에 읽기 전용(viewer)으로 붙어 휴대폰(하늘색)·ESP32(자홍색) 위치와 언리얼이 계산한 진동 세기를 보여 줍니다. 인터넷을 거치므로 실제보다 0.1~0.2초 늦게 보입니다.</p>
+      <p class="hint">페이지를 열면 자동으로 DigitalOcean 릴레이에 읽기 전용(viewer)으로 붙습니다. 주황색 = 언리얼이 계산한 관객 위치(휴대폰·ESP32 중 선택된 장치), 하늘색 = 휴대폰, 자홍색 = ESP32. 바닥 선과 오른쪽 위 목록은 관객에서 각 사물 표면까지의 거리입니다. 인터넷을 거치므로 실제보다 0.1~0.3초 늦게 보입니다.</p>
     </section>
 
     <section>
@@ -57,8 +59,10 @@ ESP32 (UWB + IMU) ───┤  UDP PTE1
                      ▼  같은 Wi-Fi, :7777
                언리얼 ARKO_PROJECT
             거리 계산 · 소리 · 진동 세기
-                     │  UDP PTH1
-     ESP32 :4210 ◀───┴───▶ 휴대폰 :4211</pre>
+      ┌──────────────┼──────────────┐
+  UDP PTH1        OSC :7000      릴레이 PTU1
+ESP32·휴대폰    TouchDesigner     이 웹 페이지
+  (진동)      → OSC :7001 신호    (관객 위치)</pre>
       <p class="hint">실시간 신호는 기본적으로 같은 Wi-Fi 안의 UDP로 오갑니다(2~10ms). 같은 Wi-Fi가 안 되는 곳에서는 DigitalOcean 릴레이(WebSocket, 0.1~0.2초)를 거칩니다. GitHub는 스캔 파일 저장소로만 쓰입니다: 앱이 스캔을 올리면 이 웹사이트와 언리얼이 내려받습니다.</p>
     </section>
   </aside>
@@ -72,7 +76,11 @@ ESP32 (UWB + IMU) ───┤  UDP PTE1
       <div id="liveText">—</div>
       <div class="bar"><div id="liveBar"></div></div>
     </div>
-    <div class="legend"><span class="dot a"></span>A <span class="dot b"></span>B <span class="dot o"></span>사물 <span class="dot ai"></span>AI 사물 <span class="dot ph"></span>휴대폰 <span class="dot es"></span>ESP32</div>
+    <div id="distPanel" class="dist" hidden>
+      <div id="distTitle" class="title">관객</div>
+      <ol id="distList"></ol>
+    </div>
+    <div class="legend"><span class="dot au"></span>관객<span class="dot a"></span>A <span class="dot b"></span>B <span class="dot o"></span>사물 <span class="dot ai"></span>AI 사물 <span class="dot ph"></span>휴대폰 <span class="dot es"></span>ESP32</div>
   </main>
 
   <script src="web/config.js"></script>

@@ -89,6 +89,15 @@ bool FPhoneTwinPacketTest::RunTest(const FString&)
 	TestEqual(TEXT("PTH1"), MakePTH(9, true, .5f, false, 0, 12.34), FString(TEXT("PTH1,9,1,128,0,0,123\n")));
 	TestEqual(TEXT("PTH1 out of range"), MakePTH(10, true, 0, false, -1, 1e9), FString(TEXT("PTH1,10,1,0,0,-1,-1\n")));
 	TestEqual(TEXT("PTH1 invalid"), MakePTH(11, false, 1, true, 3, 5), FString(TEXT("PTH1,11,0,255,1,3,-1\n")));
+	TestEqual(TEXT("PTU1"), MakePTU(12, true, TEXT("esp32"), FVector(1.5, -0.25, 1.2), 90, 3, 12.34, .5f), FString(TEXT("PTU1,12,1,esp32,1.500,-0.250,1.200,90.0,3,123,128\n")));
+	TestEqual(TEXT("PTU1 out of range"), MakePTU(13, true, TEXT("phone"), FVector::ZeroVector, 0, -1, -1, 0), FString(TEXT("PTU1,13,1,phone,0.000,0.000,0.000,0.0,-1,-1,0\n")));
+
+	// OSC: "/a" + ",ifs" + int 1 + float 1.0 + "hi" — every part padded to 4 bytes, big-endian numbers
+	const TArray<uint8> Osc = FOscMessage(TEXT("/a")).Int(1).Float(1.f).Str(TEXT("hi")).Encode();
+	const uint8 Want[] = { '/', 'a', 0, 0, ',', 'i', 'f', 's', 0, 0, 0, 0, 0, 0, 0, 1, 0x3f, 0x80, 0, 0, 'h', 'i', 0, 0 };
+	TestEqual(TEXT("osc size"), Osc.Num(), (int32)sizeof(Want));
+	TestTrue(TEXT("osc bytes"), Osc.Num() == sizeof(Want) && FMemory::Memcmp(Osc.GetData(), Want, sizeof(Want)) == 0);
+	TestEqual(TEXT("osc 4-byte string gets 4 zeros"), FOscMessage(TEXT("/abc")).Encode().Num(), 8 + 4);
 
 	FScanMeta M;
 	TestTrue(TEXT("meta"), ParseMeta(TEXT("{\"id\":\"s1\",\"a\":[0,0,0],\"b\":[2,0,0],\"objects\":[{\"id\":3,\"name\":\"사물 3\",\"c\":[1,1,1],\"r\":0.2}],\"ai\":[{\"label\":\"chair\",\"name\":\"의자\",\"c\":[0,0.4,1],\"r\":0.35}]}"), M));

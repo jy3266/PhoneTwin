@@ -8,6 +8,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "PhoneTwinCore.h"
+#include "LidarPointCloudShared.h"
 #include "PhoneTwinScanActor.generated.h"
 
 class ULidarPointCloudComponent;
@@ -24,6 +25,14 @@ enum class EPhoneTwinSource : uint8
 {
 	Phone UMETA(DisplayName = "휴대폰 (ARCore)"),
 	Esp32 UMETA(DisplayName = "ESP32 (UWB + IMU)")
+};
+
+UENUM(BlueprintType)
+enum class EPhoneTwinView : uint8
+{
+	Overview UMETA(DisplayName = "전체 보기 (멀리서)"),
+	Tracker UMETA(DisplayName = "장치 시점"),
+	Player UMETA(DisplayName = "레벨 캐릭터")
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FPhoneTwinProximity, float, DistanceCm, float, Intensity01, int32, ObjectId, const FString&, ObjectName);
@@ -44,8 +53,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Scan")
 	bool bAutoSync = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Scan", meta = (ClampMin = "0.1"))
-	float PointSize = 1.5f;
+	/** Point size. With Per Point scaling it follows each point's spacing (1 = touching neighbours); keys [ and ] change it while playing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Scan", meta = (ClampMin = "0.05"))
+	float PointSize = 0.7f;
+
+	/** Per Point keeps the most detail (edges of objects stay sharp); Per Node Adaptive fills gaps more but rounds shapes. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Scan")
+	ELidarPointCloudScalingMethod PointScaling = ELidarPointCloudScalingMethod::PerPoint;
+
+	/** Round points instead of squares. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Scan")
+	bool bRoundPoints = true;
 
 	// ---------------------------------------------------------------- input switch
 	/** Which device moves the hand in the scan: the phone (ARCore) or the ESP32 (UWB position + IMU rotation). Keys 1 / 2. */
@@ -150,7 +168,38 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound", meta = (ClampMin = "0"))
 	float MasterVolume = 1.f;
 
+	// ---------------------------------------------------------------- OSC (TouchDesigner etc.)
+	/** Send the audience position and the distance to every object as OSC (PROTOCOL.md §4) at SendRateHz. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|OSC")
+	bool bSendOsc = true;
+
+	/** OSC receiver (TouchDesigner). 127.0.0.1 = this PC. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|OSC")
+	FString OscAddress = TEXT("127.0.0.1");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|OSC")
+	int32 OscPort = 7000;
+
+	/** Also publish the audience position to the relay (PTU1) so the web viewer can show it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|OSC", meta = (ClampMin = "1", ClampMax = "30"))
+	float WebRateHz = 15.f;
+
 	// ---------------------------------------------------------------- view
+	/** View when Play starts: the whole scan from a distance, through the tracked device, or the level's own character. Key V cycles. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|View")
+	EPhoneTwinView StartView = EPhoneTwinView::Overview;
+
+	/** Overview camera: distance as a multiple of the scan size (mouse wheel / Z X while playing). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|View", meta = (ClampMin = "0.3", ClampMax = "6"))
+	float OverviewDistance = 1.25f;
+
+	/** Overview camera angle: looking down by this many degrees, and turned around the room (Q / E). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|View", meta = (ClampMin = "10", ClampMax = "89"))
+	float OverviewPitch = 50.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|View")
+	float OverviewYaw = -135.f;
+
 	/** Look through the tracked device (key C). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|View")
 	bool bFollowTracker = false;
@@ -181,6 +230,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SetSource(EPhoneTwinSource NewSource);
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void ToggleSource();
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SetFollowTracker(bool bFollow);
+	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SetView(EPhoneTwinView NewView);
+	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void CycleView();
+	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SetPointSize(float NewSize);
+	UFUNCTION(BlueprintPure, Category = "Phone Twin") EPhoneTwinView GetView() const { return View; }
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SetHideLevelGeometry(bool bHide);
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SyncNow();
 	/** Load a scan by id (empty = newest). */
@@ -204,6 +257,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Phone Twin") TObjectPtr<ULidarPointCloudComponent> Cloud;
 	UPROPERTY(VisibleAnywhere, Category = "Phone Twin") TObjectPtr<USceneComponent> Tracker;
 	UPROPERTY(VisibleAnywhere, Category = "Phone Twin") TObjectPtr<UCameraComponent> TrackerCamera;
+	UPROPERTY(VisibleAnywhere, Category = "Phone Twin") TObjectPtr<UCameraComponent> OverviewCamera;
 	UPROPERTY() TObjectPtr<UAudioComponent> SurfaceAudio;
 	UPROPERTY() TArray<TObjectPtr<UAudioComponent>> ObjectAudio;
 
@@ -217,7 +271,12 @@ private:
 	void TickRelay(float DeltaSeconds);
 	void Receive();
 	void SendHaptics();
+	void SendOsc();
+	void SendWeb();
 	void SendTo(const FString& Address, int32 Port, const FString& Line);
+	void SendBytes(const FString& Address, int32 Port, const TArray<uint8>& Bytes);
+	void UpdateOverview(float DeltaSeconds);
+	FVector TrackerRoomM() const;
 	void UpdateTracker();
 	void Measure();
 	void UpdateSounds();
@@ -230,7 +289,10 @@ private:
 	FSocket* Socket = nullptr;
 	FLink Phone, Esp; double EspAckTime = -1e9;
 	PhoneTwin::FPhonePose PhonePose; PhoneTwin::FEspPose EspPose;
-	uint32 SendSeq = 0; double SendAccum = 0, SyncTimer = 0;
+	uint32 SendSeq = 0, WebSeq = 0; double SendAccum = 0, WebAccum = 0, SyncTimer = 0;
+	EPhoneTwinView View = EPhoneTwinView::Overview;
+	FBox ScanBounds = FBox(FVector(-200, -200, 0), FVector(200, 200, 250));
+	bool bWebValid = false;
 
 	PhoneTwin::FScanFrame Frame; PhoneTwin::FPointGrid Grid; double FloorZ = 0; int32 PointCount = 0;
 	TArray<FObjectUE> Objects;

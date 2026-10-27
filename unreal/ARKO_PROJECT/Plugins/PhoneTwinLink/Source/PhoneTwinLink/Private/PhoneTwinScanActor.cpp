@@ -5,6 +5,7 @@
 #include "LidarPointCloud.h"
 #include "LidarPointCloudComponent.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Components/AudioComponent.h"
 #include "Sound/SoundBase.h"
 #include "Sockets.h"
@@ -43,8 +44,26 @@ struct FPhoneTwinLoaded
 	PhoneTwin::FScanFrame Frame;
 	PhoneTwin::FPointGrid Grid;
 	double FloorZ = 0;
+	FBox Bounds = FBox(ForceInit);
 	FString Error;
 };
+
+/** Box holding the middle 96% of the points on every axis, so a few stray points do not push the overview camera away. */
+static FBox RobustBounds(const TArray<FVector>& P)
+{
+	if (P.Num() == 0) return FBox(ForceInit);
+	const int32 Step = FMath::Max(1, P.Num() / 200000);
+	TArray<double> Axis[3];
+	for (int32 i = 0; i < P.Num(); i += Step) for (int32 k = 0; k < 3; k++) Axis[k].Add(P[i][k]);
+	FVector Lo, Hi;
+	for (int32 k = 0; k < 3; k++)
+	{
+		Axis[k].Sort();
+		Lo[k] = Axis[k][FMath::FloorToInt(Axis[k].Num() * .02)];
+		Hi[k] = Axis[k][FMath::Min(Axis[k].Num() - 1, FMath::FloorToInt(Axis[k].Num() * .98))];
+	}
+	return FBox(Lo, Hi);
+}
 
 // Console: "PhoneTwin.Source phone|esp32", "PhoneTwin.Follow", "PhoneTwin.NextScan" (also usable from -ExecCmds)
 static FAutoConsoleCommandWithWorldAndArgs GPhoneTwinSourceCmd(TEXT("PhoneTwin.Source"), TEXT("PhoneTwin.Source phone|esp32 — which device moves the hand"),
@@ -119,12 +138,12 @@ public:
 						SNew(SHorizontalBox)
 						+ SHorizontalBox::Slot().FillWidth(1).Padding(0, 0, 3, 0) [ Button(FText::FromString(TEXT("[G] GitHub 동기화")), [](APhoneTwinScanActor* A) { A->SyncNow(); }) ]
 						+ SHorizontalBox::Slot().FillWidth(1).Padding(3, 0, 3, 0) [ Button(FText::FromString(TEXT("[N] 다음 스캔")), [](APhoneTwinScanActor* A) { A->LoadNextScan(); }) ]
-						+ SHorizontalBox::Slot().FillWidth(1).Padding(3, 0, 0, 0) [ Button(FText::FromString(TEXT("[C] 시점 따라가기")), [](APhoneTwinScanActor* A) { A->SetFollowTracker(!A->bFollowTracker); },
-							[](APhoneTwinScanActor* A) { return A->bFollowTracker ? FLinearColor(.05f, .4f, .6f) : FLinearColor(.25f, .3f, .36f); }) ]
+						+ SHorizontalBox::Slot().FillWidth(1).Padding(3, 0, 0, 0) [ Button(FText::FromString(TEXT("[V] 보기 전환")), [](APhoneTwinScanActor* A) { A->CycleView(); },
+							[](APhoneTwinScanActor* A) { return A->GetView() != EPhoneTwinView::Player ? FLinearColor(.05f, .4f, .6f) : FLinearColor(.25f, .3f, .36f); }) ]
 					]
 					+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
 					[ SNew(STextBlock).Font(Small).ColorAndOpacity(FLinearColor(.6f, .66f, .73f)).AutoWrapText(true)
-						.Text(FText::FromString(TEXT("1·2 입력 전환 · C 시점 · H 레벨 메쉬 숨김 · N 다음 스캔 · G 동기화 · M 마우스 커서"))) ]
+						.Text(FText::FromString(TEXT("1·2 입력 전환 · V 보기(전체/장치/캐릭터) · Q·E 회전 · 휠·Z·X 거리 · [ ] 점 크기 · C 장치 시점 · H 레벨 메쉬 숨김 · N 다음 스캔 · G 동기화 · M 마우스"))) ]
 				]
 			]
 		];
@@ -143,6 +162,9 @@ APhoneTwinScanActor::APhoneTwinScanActor()
 	Tracker = CreateDefaultSubobject<USceneComponent>(TEXT("Tracker")); Tracker->SetupAttachment(Root);
 	TrackerCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("TrackerCamera")); TrackerCamera->SetupAttachment(Tracker);
 	TrackerCamera->SetFieldOfView(75.f);
+	OverviewCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("OverviewCamera")); OverviewCamera->SetupAttachment(Root);
+	OverviewCamera->SetFieldOfView(60.f);
+	OverviewCamera->SetAutoActivate(false);
 }
 
 void APhoneTwinScanActor::BeginPlay()
@@ -163,7 +185,7 @@ void APhoneTwinScanActor::BeginPlay()
 	LoadScan(ScanId);
 	if (bAutoSync) SyncNow();
 	if (bHideLevelGeometry) SetHideLevelGeometry(true);
-	if (bFollowTracker) SetFollowTracker(true);
+	SetView(bFollowTracker ? EPhoneTwinView::Tracker : StartView);
 }
 
 void APhoneTwinScanActor::EndPlay(const EEndPlayReason::Type Reason)
@@ -277,6 +299,52 @@ void APhoneTwinScanActor::SendTo(const FString& Address, int32 Port, const FStri
 	Socket->SendTo((const uint8*)U.Get(), U.Length(), Sent, *To);
 }
 
+void APhoneTwinScanActor::SendBytes(const FString& Address, int32 Port, const TArray<uint8>& Bytes)
+{
+	if (!Socket || Address.IsEmpty()) return;
+	ISocketSubsystem* SS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	TSharedRef<FInternetAddr> To = SS->CreateInternetAddr();
+	bool bValidIp = false; To->SetIp(*Address, bValidIp); To->SetPort(Port);
+	if (!bValidIp) return;
+	int32 Sent = 0;
+	Socket->SendTo(Bytes.GetData(), Bytes.Num(), Sent, *To);
+}
+
+FVector APhoneTwinScanActor::TrackerRoomM() const { return FVector(TrackerPos.X, -TrackerPos.Y, TrackerPos.Z) / 100.0; }
+
+void APhoneTwinScanActor::SendOsc()
+{
+	// PROTOCOL.md §4 — room frame R: metres, origin = floor mark A, +X towards B, +Y left, +Z up
+	if (!bSendOsc || OscAddress.IsEmpty()) return;
+	using PhoneTwin::FOscMessage;
+	const auto Room = [](const FVector& UE) { return FVector(UE.X, -UE.Y, UE.Z) / 100.0; };
+	SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/state")).Int(bTracking ? 1 : 0).Int(IsStarted() ? 1 : 0)
+		.Int(Source == EPhoneTwinSource::Phone ? 0 : 1).Int(Objects.Num()).Encode());
+	SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/scan")).Str(LoadedScanId).Encode());
+	if (!bTracking) return;
+	const FVector P = TrackerRoomM(), F = Room(TrackerRot.Vector() * 100.0);
+	SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/pos")).Float(P.X).Float(P.Y).Float(P.Z).Encode());
+	SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/dir")).Float(F.X).Float(F.Y).Float(F.Z).Float(-TrackerRot.Yaw).Encode());
+	SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/nearest")).Int(ObjectId).Float(DistanceCm).Float(Intensity).Int(bContact ? 1 : 0).Str(ObjectName).Encode());
+	for (int32 i = 0; i < Objects.Num(); i++)
+	{
+		// floor distance (what the audience walks) and hand distance (what the vibration uses), both to the object's surface
+		const FObjectUE& O = Objects[i];
+		const double Floor = FMath::Max(0.0, FVector::Dist2D(TrackerPos, O.C) - O.R), Hand = FMath::Max(0.0, FVector::Dist(Probe, O.C) - O.R);
+		const FVector C = Room(O.C);
+		SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/object")).Int(i).Int(O.Id).Str(O.Name).Str(O.Label)
+			.Float(Floor).Float(Hand).Float(C.X).Float(C.Y).Float(C.Z).Float(O.R).Encode());
+	}
+}
+
+void APhoneTwinScanActor::SendWeb()
+{
+	// the web viewer listens on the relay as "viewer"; one PTU1 line shows the audience whichever device drives it
+	if (!Relay.IsValid() || !Relay->IsConnected() || (!bTracking && !bWebValid)) return;
+	bWebValid = bTracking;
+	Relay->Send(PhoneTwin::MakePTU(++WebSeq, bTracking, Source == EPhoneTwinSource::Phone ? TEXT("phone") : TEXT("esp32"), TrackerRoomM(), -TrackerRot.Yaw, ObjectId, DistanceCm, Intensity));
+}
+
 void APhoneTwinScanActor::SendHaptics()
 {
 	const FString Line = PhoneTwin::MakePTH(++SendSeq, bTracking, Intensity, bContact, ObjectId, DistanceCm < 0 ? 1e9 : DistanceCm);
@@ -305,6 +373,7 @@ void APhoneTwinScanActor::Tick(float DeltaSeconds)
 	UpdateTracker();
 	Measure();
 	UpdateSounds();
+	UpdateOverview(DeltaSeconds);
 	if (bDrawDebug) DrawDebug();
 
 	SendAccum += DeltaSeconds;
@@ -312,8 +381,11 @@ void APhoneTwinScanActor::Tick(float DeltaSeconds)
 	{
 		SendAccum = FMath::Fmod(SendAccum, 1.0 / SendRateHz);
 		SendHaptics();
+		SendOsc();
 		OnProximity.Broadcast(DistanceCm, Intensity, ObjectId, ObjectName);
 	}
+	WebAccum += DeltaSeconds;
+	if (WebAccum >= 1.0 / WebRateHz) { WebAccum = FMath::Fmod(WebAccum, 1.0 / WebRateHz); SendWeb(); }
 	if (bAutoSync && !FPhoneTwinSync::Get().IsRunning())
 	{
 		SyncTimer += DeltaSeconds;
@@ -435,6 +507,20 @@ void APhoneTwinScanActor::DrawDebug() const
 		DrawDebugString(W, T.TransformPosition(FVector(0, 0, 12)), TEXT("A"), nullptr, FColor::Green, 0, true);
 	}
 	if (!bTracking) return;
+	// the audience as a standing figure (floor -> device) so it reads from far away, and a line + distance to every object
+	const double FootZ = FMath::Min(FloorZ, TrackerPos.Z - 20);
+	const FVector Foot = T.TransformPosition(FVector(TrackerPos.X, TrackerPos.Y, FootZ));
+	DrawDebugCylinder(W, Foot, T.TransformPosition(TrackerPos), 16, 16, FColor(40, 220, 255), false, -1, 0, 1.5f);
+	DrawDebugCircle(W, Foot, 30, 32, FColor(40, 220, 255), false, -1, 0, 2.f, T.GetUnitAxis(EAxis::X), T.GetUnitAxis(EAxis::Y), false);
+	if (View == EPhoneTwinView::Overview)
+		for (const FObjectUE& O : Objects)
+		{
+			const double D = FMath::Max(0.0, FVector::Dist2D(TrackerPos, O.C) - O.R);
+			if (D > SoundRange) continue;
+			const FVector A = T.TransformPosition(FVector(TrackerPos.X, TrackerPos.Y, FootZ + 2)), B = T.TransformPosition(FVector(O.C.X, O.C.Y, FootZ + 2));
+			DrawDebugLine(W, A, B, O.Id == ObjectId ? FColor::Red : FColor(255, 200, 60), false, -1, 0, .8f);
+			DrawDebugString(W, (A + B) * .5, FString::Printf(TEXT("%.0f cm"), D), nullptr, FColor::White, 0, true, 1.f);
+		}
 	const FVector P = T.TransformPosition(TrackerPos), H = T.TransformPosition(Probe);
 	const FColor C = bContact ? FColor::Red : Intensity > 0 ? FColor::Orange : FColor(40, 220, 255);
 	DrawDebugSphere(W, H, 4 + 6 * Intensity, 12, C, false, -1, 0, 1.2f);
@@ -453,6 +539,56 @@ void APhoneTwinScanActor::HandleKeys()
 	if (PC->WasInputKeyJustPressed(EKeys::N)) LoadNextScan();
 	if (PC->WasInputKeyJustPressed(EKeys::G)) SyncNow();
 	if (PC->WasInputKeyJustPressed(EKeys::M)) ShowMouse(!bMouse);
+	if (PC->WasInputKeyJustPressed(EKeys::V)) CycleView();
+	if (PC->WasInputKeyJustPressed(EKeys::LeftBracket)) SetPointSize(PointSize / 1.2f);
+	if (PC->WasInputKeyJustPressed(EKeys::RightBracket)) SetPointSize(PointSize * 1.2f);
+}
+
+void APhoneTwinScanActor::SetPointSize(float NewSize)
+{
+	PointSize = FMath::Clamp(NewSize, .05f, 20.f);
+	if (Cloud) { Cloud->PointSize = PointSize; Cloud->MarkRenderStateDirty(); }
+}
+
+void APhoneTwinScanActor::UpdateOverview(float DeltaSeconds)
+{
+	APlayerController* PC = GetWorld()->GetFirstPlayerController(); if (!PC) return;
+	// the level's game mode possesses its character after BeginPlay and takes the view: take it back
+	const bool bBlendingHere = PC->PlayerCameraManager && PC->PlayerCameraManager->PendingViewTarget.Target == this;
+	if (View != EPhoneTwinView::Player && PC->GetViewTarget() != this && !bBlendingHere) PC->SetViewTarget(this);
+	if (View != EPhoneTwinView::Overview) return;
+
+	if (PC->IsInputKeyDown(EKeys::Q)) OverviewYaw -= 70.f * DeltaSeconds;
+	if (PC->IsInputKeyDown(EKeys::E)) OverviewYaw += 70.f * DeltaSeconds;
+	if (PC->IsInputKeyDown(EKeys::Z) || PC->WasInputKeyJustPressed(EKeys::MouseScrollUp)) OverviewDistance /= PC->IsInputKeyDown(EKeys::Z) ? FMath::Pow(1.8f, DeltaSeconds) : 1.1f;
+	if (PC->IsInputKeyDown(EKeys::X) || PC->WasInputKeyJustPressed(EKeys::MouseScrollDown)) OverviewDistance *= PC->IsInputKeyDown(EKeys::X) ? FMath::Pow(1.8f, DeltaSeconds) : 1.1f;
+	OverviewDistance = FMath::Clamp(OverviewDistance, .3f, 6.f);
+
+	// frame the whole scan: look at its centre from OverviewPitch above, far enough for its largest side to fit
+	const FVector Size = ScanBounds.GetSize();
+	const double Span = FMath::Max3(Size.X, Size.Y, 300.0);
+	const FRotator Rot(-OverviewPitch, OverviewYaw, 0);
+	const FVector Want = ScanBounds.GetCenter() - Rot.Vector() * Span * OverviewDistance;
+	const FTransform& T = GetActorTransform();
+	const FVector Cur = T.InverseTransformPosition(OverviewCamera->GetComponentLocation());
+	const FVector Loc = Cur.Equals(FVector::ZeroVector) ? Want : FMath::VInterpTo(Cur, Want, DeltaSeconds, 6.f);
+	OverviewCamera->SetWorldLocationAndRotation(T.TransformPosition(Loc), T.TransformRotation((ScanBounds.GetCenter() - Loc).Rotation().Quaternion()));
+}
+
+void APhoneTwinScanActor::SetView(EPhoneTwinView NewView)
+{
+	View = NewView;
+	bFollowTracker = View == EPhoneTwinView::Tracker;
+	TrackerCamera->SetActive(View == EPhoneTwinView::Tracker);
+	OverviewCamera->SetActive(View == EPhoneTwinView::Overview);
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr; if (!PC) return;
+	AActor* Target = View == EPhoneTwinView::Player ? (AActor*)PC->GetPawn() : (AActor*)this;
+	if (Target) PC->SetViewTargetWithBlend(Target, .35f);
+}
+
+void APhoneTwinScanActor::CycleView()
+{
+	SetView(View == EPhoneTwinView::Overview ? EPhoneTwinView::Tracker : View == EPhoneTwinView::Tracker ? EPhoneTwinView::Player : EPhoneTwinView::Overview);
 }
 
 // ------------------------------------------------------------------------------------------------ switches
@@ -468,10 +604,7 @@ void APhoneTwinScanActor::ToggleSource() { SetSource(Source == EPhoneTwinSource:
 
 void APhoneTwinScanActor::SetFollowTracker(bool bFollow)
 {
-	bFollowTracker = bFollow;
-	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr; if (!PC) return;
-	AActor* Target = bFollow ? (AActor*)this : (AActor*)PC->GetPawn();
-	if (Target) PC->SetViewTargetWithBlend(Target, .25f);
+	SetView(bFollow ? EPhoneTwinView::Tracker : StartView == EPhoneTwinView::Tracker ? EPhoneTwinView::Overview : StartView);
 }
 
 void APhoneTwinScanActor::SetHideLevelGeometry(bool bHide)
@@ -526,6 +659,8 @@ FString APhoneTwinScanActor::HudText() const
 	else if (DistanceCm < 0) S += FString::Printf(TEXT("\n범위 밖 (%.0f cm 이내에 반응)"), ReactRange);
 	else S += FString::Printf(TEXT("\n%s %s  %.1f cm  · 세기 %d%%"), bContact ? TEXT("▶ 접촉") : TEXT("근접"), *ObjectName, DistanceCm, FMath::RoundToInt(Intensity * 100));
 	S += FString::Printf(TEXT("\n스캔: %s"), *ScanStatus);
+	S += FString::Printf(TEXT("\n보기: %s · 점 크기 %.2f%s"), View == EPhoneTwinView::Overview ? TEXT("전체 (멀리서)") : View == EPhoneTwinView::Tracker ? TEXT("장치 시점") : TEXT("레벨 캐릭터"),
+		PointSize, bSendOsc ? *FString::Printf(TEXT(" · OSC → %s:%d"), *OscAddress, OscPort) : TEXT(""));
 	if (!PhoneScanId.IsEmpty() && !LoadedScanId.IsEmpty() && PhoneScanId != LoadedScanId && Now - Phone.LastTime < 2)
 		S += FString::Printf(TEXT("\n⚠ 휴대폰은 다른 스캔(%s)을 쓰고 있습니다"), *PhoneScanId);
 	S += TEXT("\nGitHub: ") + FPhoneTwinSync::Get().GetStatus();
@@ -564,6 +699,7 @@ void APhoneTwinScanActor::LoadScan(const FString& Id)
 		TArray<FVector> UE;
 		PhoneTwin::ToCloudPoints(S, C, R->Frame, R->Points, &UE);
 		R->Grid.Build(UE, 3.0);
+		R->Bounds = RobustBounds(UE);
 		R->FloorZ = R->Frame.bAligned ? 0.0 : PhoneTwin::EstimateFloorZ(UE);
 		AsyncTask(ENamedThreads::GameThread, [Weak, Copy, R]() { if (APhoneTwinScanActor* A = Weak.Get()) A->ApplyScan(Copy.Id, R); });
 	});
@@ -580,7 +716,10 @@ void APhoneTwinScanActor::ApplyScan(const FString& Id, TSharedPtr<FPhoneTwinLoad
 	ULidarPointCloud* PC = ULidarPointCloud::CreateFromData(Data->Points, false);
 	Data->Points.Empty();
 	Cloud->SetPointCloud(PC);
-	Cloud->PointSize = PointSize;
+	Cloud->ScalingMethod = PointScaling;
+	Cloud->SetPointShape(bRoundPoints ? ELidarPointCloudSpriteShape::Circle : ELidarPointCloudSpriteShape::Square);
+	SetPointSize(PointSize);
+	if (Data->Bounds.IsValid) ScanBounds = Data->Bounds;
 
 	// objects + their sounds
 	for (UAudioComponent* A : ObjectAudio) if (A) A->DestroyComponent();

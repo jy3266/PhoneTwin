@@ -106,3 +106,41 @@ wss://<앱 주소>/ws?room=<방 이름>&role=<phone|esp32|unreal|viewer>&key=<RE
 - 지연 측정: 클라이언트가 `PTR1,ping,<임의 값>`을 보내면 서버가 보낸 쪽에만 `PTR1,pong,<같은 값>`을 돌려줍니다.
 - 서버 환경 변수 `RELAY_KEY`가 있으면 phone·esp32·unreal은 같은 key가 필요합니다. `VIEW_KEY`가 있으면 viewer도 key가 필요합니다(없으면 누구나 읽기 가능).
 - 서버는 15초마다 ping을 보내고, 클라이언트는 끊기면 2초 뒤 다시 접속합니다.
+- `PTU1` — 언리얼 → (릴레이) → viewer: 언리얼이 계산한 **관객 위치**. 휴대폰·ESP32 중 지금 선택된 장치의 위치를 웹에서 볼 수 있게 합니다(초당 15번, 걷기 테스트 중에만 `valid=1`).
+  ```
+  PTU1,seq,valid,source,x,y,z,yaw,objectId,distanceMm,intensity
+  ```
+  `source` = `phone`|`esp32`, `x,y,z` = 방 좌표 R(m, PTE1과 같음), `yaw` = 도(위에서 봐서 반시계), 나머지는 PTH1과 같음.
+  휴대폰·ESP32는 PTH1만 읽으므로 이 줄은 무시합니다.
+
+## 4. OSC — 언리얼 → TouchDesigner → 다른 프로그램
+
+언리얼(`PhoneTwinLink`)이 진동을 보낼 때마다(기본 30Hz) 같은 PC의 TouchDesigner로 OSC를 보냅니다.
+언리얼 Details > **Phone Twin|OSC**: `Send Osc`(기본 켬), `Osc Address`(기본 `127.0.0.1`), `Osc Port`(기본 `7000`).
+좌표는 방 좌표 R: m, 원점 = 바닥 표시 A, +X = B 쪽, +Y = 왼쪽, +Z = 위.
+
+| 주소 | 인자 |
+|---|---|
+| `/phonetwin/state` | `active`(i, 추적 중이고 걷기 테스트 중이면 1) `walk`(i) `source`(i, 0 휴대폰 · 1 ESP32) `objectCount`(i) |
+| `/phonetwin/scan` | `scanId`(s) |
+| `/phonetwin/pos` | `x y z`(f) — 관객(선택된 장치) 위치 |
+| `/phonetwin/dir` | `fx fy fz`(f) `yaw`(f, 도) |
+| `/phonetwin/nearest` | `objectId`(i, 0 = 스캔 표면, -1 = 없음) `distCm`(f, -1 = 범위 밖) `intensity`(f, 0~1) `contact`(i) `name`(s) — 진동 기준 |
+| `/phonetwin/object` | `index id`(i) `name label`(s) `floorCm handCm`(f) `cx cy cz`(f, m) `radiusCm`(f) — 사물마다 한 개 |
+
+`floorCm` = 바닥에서 잰 관객 ↔ 사물 표면 거리(소리와 같은 기준), `handCm` = 손(장치) ↔ 사물 표면 3D 거리.
+`active=0`이면 `pos`·`object`는 보내지 않습니다.
+
+TouchDesigner(`Phone_Twin_Project.toe`)가 이것을 받아 움직임 신호로 바꿔 `Outhost:Outport`(기본 `127.0.0.1:7001`)로 다시 보냅니다:
+
+| 주소 | 인자 |
+|---|---|
+| `/td/state` | `active live sim objectCount` |
+| `/td/audience` | `x y z` `speed`(m/s) `heading`(도) |
+| `/td/velocity` | `vx vy vz` `accel` |
+| `/td/energy` | 0~1 (걷는 속도, 1.2 m/s = 1) |
+| `/td/nearest` | `index id proximity floorCm name` |
+| `/td/object/<index>` | `proximity`(0~1) `floorCm` `approach`(cm/s, 다가오면 +) `id name` |
+| `/td/proximity` | 모든 사물의 proximity (index 순서) |
+
+`proximity = 1 - floorCm / 근접 범위`(TouchDesigner 설정, 기본 200 cm), 0~1로 자름. 시험: `py tools/osc_test.py both`.

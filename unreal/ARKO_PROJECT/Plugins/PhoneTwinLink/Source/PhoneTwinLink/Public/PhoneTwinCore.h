@@ -87,6 +87,23 @@ namespace PhoneTwin
 	PHONETWINLINK_API bool ParsePTP(const FString& Line, FPhonePose& Out);
 	PHONETWINLINK_API bool ParsePTE(const FString& Line, FEspPose& Out);
 	PHONETWINLINK_API FString MakePTH(uint32 Seq, bool bValid, float Intensity01, bool bContact, int32 ObjectId, double DistanceCm);
+	/** Audience pose computed by Unreal, for the web viewer: R frame (metres), yaw ccw degrees, source "phone"/"esp32". */
+	PHONETWINLINK_API FString MakePTU(uint32 Seq, bool bValid, const FString& Source, const FVector& RoomM, double YawDeg, int32 ObjectId, double DistanceCm, float Intensity01);
+
+	/** Minimal OSC 1.0 message (int32 / float32 / UTF-8 string arguments), sent as one UDP datagram. */
+	class PHONETWINLINK_API FOscMessage
+	{
+	public:
+		explicit FOscMessage(const FString& InAddress) : Address(InAddress) {}
+		FOscMessage& Int(int32 V);
+		FOscMessage& Float(float V);
+		FOscMessage& Str(const FString& V);
+		TArray<uint8> Encode() const;
+	private:
+		FString Address;
+		FString Tags = TEXT(",");
+		TArray<uint8> Args;
+	};
 
 	/** Same curve as the phone app: 0 at Range, 1 at Contact (and closer). */
 	inline float Intensity(double Dist, double Range, double Contact)

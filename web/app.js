@@ -47,7 +47,7 @@ function updateLabels() {
     }
   }
 }
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); updateLabels(); });
+renderer.setAnimationLoop(() => { updateAudience(); controls.update(); renderer.render(scene, camera); updateLabels(); });
 
 // ---------------------------------------------------------------- camera presets
 function setView(kind) {
@@ -123,6 +123,7 @@ function showCloud(buffer, meta, name) {
   geom.computeBoundingBox(); bounds = geom.boundingBox.clone();
   grid.position.set(bounds.getCenter(tmp).x, meta?.a ? meta.a[1] : bounds.min.y, bounds.getCenter(tmp).z);
   addMarks(meta); currentMeta = meta || null;
+  trailN = 0; trail.geometry.setDrawRange(0, 0); audience.pos = null;
   setView('iso');
   $('title').textContent = name;
   const s = bounds.getSize(new THREE.Vector3());
@@ -217,7 +218,95 @@ function tracker(color) {
   return g;
 }
 const phoneMark = tracker(0x22d3ee), espMark = tracker(0xe879f9);
-const state = { phoneAt: 0, espAt: 0, hapAt: 0, peers: '', espNote: '' };
+const state = { phoneAt: 0, espAt: 0, hapAt: 0, audAt: 0, audValid: false, audSource: '', peers: '', espNote: '' };
+
+// ---------------------------------------------------------------- audience: PTU1 from Unreal, else the phone / ESP32 marker
+const AUD = 0xfb923c;
+const audience = { group: tracker(AUD), target: new THREE.Vector3(), dir: new THREE.Vector3(1, 0, 0), pos: null, from: '' };
+audience.group.children[0].scale.setScalar(1.5);
+const onTop = (m) => { m.depthTest = false; m.transparent = true; return m; };
+const audPole = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), onTop(new THREE.LineBasicMaterial({ color: AUD })));
+const TRAIL = 400, trailPos = new Float32Array(TRAIL * 3);
+const trail = new THREE.Line(new THREE.BufferGeometry(), onTop(new THREE.LineBasicMaterial({ color: AUD, opacity: 0.55 })));
+trail.geometry.setAttribute('position', new THREE.BufferAttribute(trailPos, 3)); trail.geometry.setDrawRange(0, 0);
+const distLines = new THREE.LineSegments(new THREE.BufferGeometry(), onTop(new THREE.LineBasicMaterial({ vertexColors: true, opacity: 0.9 })));
+[audPole, trail, distLines].forEach((o) => { o.renderOrder = 9; o.frustumCulled = false; live.add(o); });
+let trailN = 0, distLabels = [], lastList = 0;
+
+function floorY() { return currentMeta && Array.isArray(currentMeta.a) ? currentMeta.a[1] : bounds.min.y; }
+function sceneObjects() {
+  const m = currentMeta || {};
+  return [...(m.objects || []).map((o) => ({ name: o.name || `사물 ${o.id}`, c: v3(o.c), r: o.r || 0.25 })),
+    ...(m.ai || []).map((it) => ({ name: it.name || it.label, c: v3(it.c), r: it.r || 0.4 }))];
+}
+
+function updateAudience() {
+  const now = performance.now();
+  let src = null;
+  if (state.audValid && now - state.audAt < 1500) src = { p: audience.target, d: audience.dir, from: state.audSource === 'esp32' ? 'ESP32' : '휴대폰', unreal: true };
+  else if (phoneMark.visible && phoneMark.valid) src = { p: phoneMark.position, d: phoneMark.dir, from: '휴대폰' };
+  else if (espMark.visible) src = { p: espMark.position, from: 'ESP32' };
+  const g = audience.group;
+  g.visible = audPole.visible = distLines.visible = trail.visible = !!src;
+  $('distPanel').hidden = !src;
+  if (!src) { distLabels.forEach((l) => { l.style.display = 'none'; }); return; }
+
+  // smooth 15 Hz updates into 60 fps motion
+  if (!audience.pos || audience.pos.distanceTo(src.p) > 2) audience.pos = src.p.clone(); else audience.pos.lerp(src.p, 0.25);
+  const p = audience.pos, fy = floorY();
+  g.position.copy(p);
+  if (src.d) g.arrow.setDirection(src.d);
+  const pole = audPole.geometry.attributes.position;
+  pole.setXYZ(0, p.x, fy, p.z); pole.setXYZ(1, p.x, p.y, p.z); pole.needsUpdate = true;
+  audPole.geometry.computeBoundingSphere();
+
+  // trail on the floor
+  const k = (trailN - 1) * 3;
+  if (trailN === 0 || Math.hypot(trailPos[k] - p.x, trailPos[k + 2] - p.z) > 0.02) {
+    if (trailN === TRAIL) { trailPos.copyWithin(0, 3); trailN--; }
+    trailPos.set([p.x, fy + 0.01, p.z], trailN * 3); trailN++;
+    trail.geometry.attributes.position.needsUpdate = true; trail.geometry.setDrawRange(0, trailN);
+  }
+
+  // a floor line and a distance (to the object's surface, on the floor) for every object
+  const objs = sceneObjects();
+  const pos = new Float32Array(objs.length * 6), col = new Float32Array(objs.length * 6), c = new THREE.Color();
+  const w = stage.clientWidth, h = stage.clientHeight, rows = [];
+  while (distLabels.length < objs.length) { const el = document.createElement('div'); el.className = 'dist-label'; labelsEl.appendChild(el); distLabels.push(el); }
+  objs.forEach((o, i) => {
+    const d = Math.max(0, Math.hypot(o.c.x - p.x, o.c.z - p.z) - o.r);
+    const prox = Math.max(0, 1 - d / 2);   // 1 at the object, 0 from 2 m
+    pos.set([p.x, fy + 0.02, p.z, o.c.x, fy + 0.02, o.c.z], i * 6);
+    c.setRGB(1, 0.85 - 0.6 * prox, 0.25 - 0.15 * prox).toArray(col, i * 6); c.toArray(col, i * 6 + 3);
+    tmp.set((p.x + o.c.x) / 2, fy + 0.05, (p.z + o.c.z) / 2).project(camera);
+    const el = distLabels[i], show = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1;
+    el.style.display = show ? '' : 'none';
+    if (show) { el.style.left = `${(tmp.x * 0.5 + 0.5) * w}px`; el.style.top = `${(0.5 - tmp.y * 0.5) * h}px`; el.textContent = `${Math.round(d * 100)} cm`; }
+    rows.push({ name: o.name, d, prox });
+  });
+  distLabels.slice(objs.length).forEach((l) => { l.style.display = 'none'; });
+  distLines.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  distLines.geometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
+
+  if ($('followAud').checked) {   // keep the camera's offset, move its target with the audience
+    const delta = tmp.copy(p).sub(controls.target).multiplyScalar(0.08);
+    controls.target.add(delta); camera.position.add(delta);
+  }
+  if (now - lastList > 200) {
+    lastList = now;
+    rows.sort((a, b) => a.d - b.d);
+    $('distTitle').textContent = `관객 (${src.from}${src.unreal ? ' · 언리얼' : ''})  ·  높이 ${(p.y - fy).toFixed(2)} m`;
+    $('distList').innerHTML = rows.length ? '' : '<li class="muted">스캔에 사물이 없습니다</li>';
+    for (const r of rows) {
+      const li = document.createElement('li');
+      li.innerHTML = '<span class="n"></span><span class="b"><i></i></span><span class="v"></span>';
+      li.querySelector('.n').textContent = r.name;
+      li.querySelector('i').style.width = `${Math.round(r.prox * 100)}%`;
+      li.querySelector('.v').textContent = `${(r.d * 100).toFixed(0)} cm`;
+      $('distList').appendChild(li);
+    }
+  }
+}
 
 /** ESP32 room frame R (m, Z up, +Y left of +X, origin A, +X toward B) -> scan frame S (Y up). */
 export function roomToScan(meta, x, y, z) {
@@ -241,7 +330,7 @@ function onLine(line) {
     if (n.some((v) => !isFinite(v))) return;
     phoneMark.position.set(n[0], n[1], n[2]);
     const dir = new THREE.Vector3(n[3], n[4], n[5]);
-    if (dir.lengthSq() > 1e-6) phoneMark.arrow.setDirection(dir.normalize());
+    if (dir.lengthSq() > 1e-6) { phoneMark.arrow.setDirection(dir.normalize()); phoneMark.dir = dir; }
     phoneMark.visible = true; phoneMark.valid = f[2] === '1'; state.phoneAt = now;
   } else if (f[0] === 'PTE1' && f.length >= 9) {
     const [x, y, z, yaw, pitch] = f.slice(3, 8).map(Number);
@@ -253,6 +342,15 @@ function onLine(line) {
     espMark.arrow.setDirection(fw.normalize());
     espMark.visible = true; state.espAt = now;
     state.espNote = r.aligned ? '' : ' (스캔에 A·B가 없어 ESP32 좌표를 그대로 표시)';
+  } else if (f[0] === 'PTU1' && f.length >= 11) {
+    // audience as Unreal sees it (whichever device drives it): R frame, metres
+    const [x, y, z, yaw] = f.slice(4, 8).map(Number);
+    if (![x, y, z].every(isFinite)) return;
+    state.audValid = f[2] === '1'; state.audSource = f[3]; state.audAt = now;
+    if (!state.audValid) return;
+    const r = roomToScan(currentMeta, x, y, z), yr = (yaw || 0) * Math.PI / 180;
+    audience.target.copy(r.p);
+    audience.dir.copy(r.d).multiplyScalar(Math.cos(yr)).addScaledVector(r.left, Math.sin(yr)).normalize();
   } else if (f[0] === 'PTH1' && f.length >= 7) {
     const i = Math.max(0, Math.min(255, +f[3])) / 255, contact = f[4] === '1', obj = +f[5], mm = +f[6];
     $('liveHud').hidden = false;
@@ -288,16 +386,20 @@ function save() { try { localStorage.setItem('ptRelay', JSON.stringify({ url: $(
 {
   const cfg = window.PHONETWIN_RELAY || {};
   let saved = null; try { saved = JSON.parse(localStorage.getItem('ptRelay') || 'null'); } catch (e) { saved = null; }
-  $('relayUrl').value = (saved && saved.url) || cfg.url || '';
-  $('relayRoom').value = (saved && saved.room) || cfg.room || 'arko';
+  const q = new URLSearchParams(location.search);   // ?relay=ws://…&room=… overrides (testing, another venue)
+  $('relayUrl').value = q.get('relay') || (saved && saved.url) || cfg.url || '';
+  $('relayRoom').value = q.get('room') || (saved && saved.room) || cfg.room || 'arko';
 }
 $('relayGo').addEventListener('click', () => { save(); wantLive = true; if (ws) { const o = ws; ws = null; o.close(); } connect(); });
 $('relayStop').addEventListener('click', () => { wantLive = false; clearTimeout(retry); if (ws) { const o = ws; ws = null; o.close(); } wsState = '연결 안 됨'; });
+// open the page = watch live (config.js auto: true); 끊기 stops it for this visit
+if ((window.PHONETWIN_RELAY || {}).auto && $('relayUrl').value.trim()) { wantLive = true; connect(); }
 
 setInterval(() => {
   const now = performance.now(), age = (t) => (t ? `${Math.round(now - t)} ms 전` : '없음');
   if (now - state.phoneAt > 3000) phoneMark.visible = false;
   if (now - state.espAt > 3000) espMark.visible = false;
   if (now - state.hapAt > 3000) $('liveHud').hidden = true;
-  $('relayState').textContent = `${wsState}${state.peers ? '\n접속: ' + state.peers : ''}\n휴대폰 ${age(state.phoneAt)} · ESP32 ${age(state.espAt)}${state.espNote}\n진동 세기 ${age(state.hapAt)}`;
+  $('relayState').textContent = `${wsState}${state.peers ? '\n접속: ' + state.peers : ''}\n휴대폰 ${age(state.phoneAt)} · ESP32 ${age(state.espAt)}${state.espNote}\n관객(언리얼) ${age(state.audAt)}${state.audAt && !state.audValid ? ' · 대기(걷기 테스트 전)' : ''}\n진동 세기 ${age(state.hapAt)}`;
+  $('liveDot').className = `live-dot ${ws && wsState === '연결됨' ? (now - Math.max(state.audAt, state.phoneAt, state.espAt) < 1500 ? 'on' : 'idle') : 'off'}`;
 }, 250);

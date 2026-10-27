@@ -99,6 +99,9 @@ ARKO_PROJECT에 이미 설치·빌드되어 있습니다(`Plugins/PhoneTwinLink`
 1. 에디터를 다시 열면 됩니다. "모듈을 다시 빌드할까요?"가 뜨면 **예**(Visual Studio 2022 필요).
 2. 아무 레벨에서 **Play** → 자동으로 `PhoneTwinScan_Auto` 액터가 생기고 가장 최근 스캔이 뜹니다. 왼쪽 위 패널:
    - **[1] 휴대폰 / [2] ESP32** — 입력 장치 스위치. 초록 = 신호 수신 중, 주황 = 선택했지만 신호 없음.
+   - Play하면 **스캔 전체를 멀리서 내려다보는 카메라**로 시작합니다. **[V]** 보기 전환(전체 → 장치 시점 → 레벨 캐릭터), 전체 보기에서 **Q·E** 회전, **마우스 휠·Z·X** 거리.
+   - **[ ]** 점 크기 줄이기·키우기(기본 0.7, 둥근 점, Per Point 크기 — 사물 윤곽이 또렷하게). Details > Scan의 `Point Size`·`Point Scaling`·`Round Points`로 고정.
+   - 관객은 하늘색 기둥(바닥 → 장치 높이)으로, 전체 보기에서는 각 사물까지 바닥 거리선과 cm가 표시됩니다.
    - **[C]** 장치 시점으로 보기, **[H]** 템플릿 레벨 메쉬 숨기기, **[N]** 다음 스캔, **[G]** GitHub 동기화, **[M]** 마우스 커서(버튼 클릭용).
    - 콘솔: `PhoneTwin.Source esp32`, `PhoneTwin.Follow`, `PhoneTwin.NextScan`, 에디터에서 `PhoneTwin.Sync`, `PhoneTwin.ImportAll`.
 3. 세부 조정은 레벨에 **Phone Twin Scan** 액터를 직접 놓고 Details에서 바꿉니다(직접 놓으면 자동 생성은 생기지 않음).
@@ -108,6 +111,15 @@ ARKO_PROJECT에 이미 설치·빌드되어 있습니다(`Plugins/PhoneTwinLink`
    - 블루프린트에서 `On Proximity`(거리, 세기, 사물 ID, 이름) 이벤트로 직접 효과를 붙일 수 있습니다.
 4. 프로젝트 설정 → Plugins → **Phone Twin**: 저장소·브랜치·확인 주기·에셋 자동 생성·자동 생성 액터 끄기.
 5. 방화벽: 처음 Play 때 Windows가 묻는 네트워크 허용을 **개인 네트워크 허용**으로 해 주세요(UDP 7777 수신).
+6. **OSC (TouchDesigner)**: Details > OSC — `Send Osc`(기본 켬)로 관객 위치와 사물마다의 거리를 `127.0.0.1:7000`에 보냅니다(PROTOCOL.md §4). 같은 값을 릴레이에 `PTU1`로도 올려 웹 뷰어에서 관객이 움직이는 것이 보입니다.
+
+## 2-1. TouchDesigner (`touchdesigner/Phone_Twin_Project.toe`)
+
+언리얼이 보낸 OSC(:7000)를 받아 **관객 위치·사물별 거리 표**, 위에서 본 **지도**, **움직임 신호**(속도·방향·에너지·사물별 근접도·다가오는 속도)를 만들고, 그 신호를 다시 OSC(:7001)로 보냅니다. TouchDesigner 안에서는 `signals_out` CHOP 채널(`speed`, `obj0_prox` …)로 바로 씁니다.
+- `project1`의 **PhoneTwin** 파라미터 페이지: 입력 포트, 출력 주소·포트·속도, 근접 범위(cm), 부드럽게(초), 시뮬레이션.
+- 시뮬레이션이 켜져 있으면 언리얼 신호가 1초 이상 없을 때 가짜 관객이 돌아다닙니다(신호가 오면 자동으로 실제 값). **전시 때는 끄세요.**
+- 장비 없이 시험: `py tools\osc_test.py both` (언리얼 흉내로 :7000에 보내고 :7001 출력 확인).
+- 네트워크를 다시 만들기: `py touchdesigner\make_toe.py --src <기존.toe> --out <새.toe>` (`td_core.py`가 네트워크의 파이썬 코드).
 
 좌표: 스캔에 바닥 A·B가 있으면 A가 언리얼 원점(0,0,0), A→B가 +X, 위가 +Z입니다(단위 cm). 그래서 ESP32 UWB 앵커 0을 바닥 A에, 앵커 1을 B 방향에 두면 보정 없이 같은 공간이 됩니다.
 
@@ -165,7 +177,8 @@ py tools\sync_scans.py --dry-run          :: GitHub → ARKO_PROJECT/PhoneTwinSc
 | `unreal/ARKO_PROJECT/` | 언리얼 플러그인 `PhoneTwinLink` + 프로젝트 C++ 모듈 사본 |
 | `esp32/PhoneTwinUWB/` | ESP32 UWB+IMU 송신 · 진동 수신 스케치 (`PhoneTwinHaptic/`는 v3 그대로) |
 | `relay/`, `.do/` | DigitalOcean WebSocket 릴레이(`server.js`, 시험 `test.js`, UDP 다리 `bridge.js`)와 배포 설정 |
-| `tools/` | `pose_sim.py`(장치 흉내), `sync_scans.py`(수동 동기화), `make_sample_scan.py` |
+| `touchdesigner/` | `Phone_Twin_Project.toe`(OSC 입·출력 네트워크), `td_core.py`(네트워크 코드), `build_phonetwin_td.py`·`make_toe.py`(다시 만들기) |
+| `tools/` | `pose_sim.py`(장치 흉내), `osc_test.py`(OSC 시험), `sync_scans.py`(수동 동기화), `make_sample_scan.py` |
 | `windows/` | v1 Windows 모니터(선택) |
 
 ## 검증 범위 (2026-10-11)

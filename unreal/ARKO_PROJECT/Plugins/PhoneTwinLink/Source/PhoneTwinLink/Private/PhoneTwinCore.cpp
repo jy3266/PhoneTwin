@@ -327,4 +327,29 @@ FString MakePTH(uint32 Seq, bool bValid, float Intensity01, bool bContact, int32
 	const int32 Mm = !bValid || DistanceCm >= 1e7 ? -1 : FMath::RoundToInt(FMath::Clamp(DistanceCm, 0.0, 6500.0) * 10.0);
 	return FString::Printf(TEXT("PTH1,%u,%d,%d,%d,%d,%d\n"), Seq, bValid ? 1 : 0, FMath::RoundToInt(FMath::Clamp(Intensity01, 0.f, 1.f) * 255.f), bContact ? 1 : 0, ObjectId, Mm);
 }
+
+FString MakePTU(uint32 Seq, bool bValid, const FString& Source, const FVector& RoomM, double YawDeg, int32 ObjectId, double DistanceCm, float Intensity01)
+{
+	const int32 Mm = !bValid || DistanceCm < 0 || DistanceCm >= 1e7 ? -1 : FMath::RoundToInt(FMath::Min(DistanceCm, 6500.0) * 10.0);
+	return FString::Printf(TEXT("PTU1,%u,%d,%s,%.3f,%.3f,%.3f,%.1f,%d,%d,%d\n"), Seq, bValid ? 1 : 0, *Source, RoomM.X, RoomM.Y, RoomM.Z, YawDeg,
+		ObjectId, Mm, FMath::RoundToInt(FMath::Clamp(Intensity01, 0.f, 1.f) * 255.f));
+}
+
+// ---- OSC
+static void OscPad(TArray<uint8>& B) { do B.Add(0); while (B.Num() % 4); }   // strings end with 1..4 zero bytes
+static void OscString(TArray<uint8>& B, const FString& S) { FTCHARToUTF8 U(*S); B.Append((const uint8*)U.Get(), U.Length()); OscPad(B); }
+static void OscBig32(TArray<uint8>& B, uint32 V) { B.Add(V >> 24); B.Add((V >> 16) & 255); B.Add((V >> 8) & 255); B.Add(V & 255); }
+
+FOscMessage& FOscMessage::Int(int32 V) { Tags += TEXT("i"); OscBig32(Args, (uint32)V); return *this; }
+FOscMessage& FOscMessage::Float(float V) { Tags += TEXT("f"); uint32 U; FMemory::Memcpy(&U, &V, 4); OscBig32(Args, U); return *this; }
+FOscMessage& FOscMessage::Str(const FString& V) { Tags += TEXT("s"); OscString(Args, V); return *this; }
+
+TArray<uint8> FOscMessage::Encode() const
+{
+	TArray<uint8> B;
+	OscString(B, Address);
+	OscString(B, Tags);
+	B.Append(Args);
+	return B;
+}
 }
