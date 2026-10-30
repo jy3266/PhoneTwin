@@ -2,6 +2,14 @@
   "version": 1,
   "scans": [
     {
+      "id": "phone_scan_20261030_2120",
+      "ply": "scans\/phone_scan_20261030_2120.ply",
+      "meta": "scans\/phone_scan_20261030_2120.json",
+      "points": 19952,
+      "created": "2026-10-30T21:20:35+09:00",
+      "device": "SM-F966N"
+    },
+    {
       "id": "phone_scan_20261030_1421",
       "ply": "scans\/phone_scan_20261030_1421.ply",
       "meta": "scans\/phone_scan_20261030_1421.json",
