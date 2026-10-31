@@ -8,6 +8,7 @@
 #   /phonetwin/dir      fx fy fz yawDeg
 #   /phonetwin/nearest  objectId distCm intensity01 contact name  (what the vibration uses; -1 cm = out of range)
 #   /phonetwin/object   index id name label floorCm handCm cx cy cz radiusCm   (one per object, every frame)
+#   /phonetwin/touch    index id name strength                  (once, when the audience touches an object; -1 = scan surface)
 # Out (to Outhost:Outport, at Outrate Hz)
 #   /td/state      active live sim objectCount
 #   /td/audience   x y z speed headingDeg
@@ -16,6 +17,8 @@
 #   /td/nearest    index id proximity floorCm name
 #   /td/object/<i> proximity floorCm approachCmPerS id name
 #   /td/proximity  proximity of every object, in index order
+#   /td/touch      index id name strength                       (passed on when it happens)
+# Light trail: the 'light_trail' Script TOP keeps a glowing trace of where the audience walked (fades over Trailfade s).
 import math
 
 S = None
@@ -37,7 +40,7 @@ def reset():
 	         pos=[0.0, 0.0, 0.0], dir=[1.0, 0.0, 0.0], yaw=0.0,
 	         near_id=-1, near_cm=-1.0, near_int=0.0, near_contact=0, near_name='',
 	         objects={}, vel=[0.0, 0.0, 0.0], speed=0.0, accel=0.0, prev=None, prevAt=0.0,
-	         trail=[], sendAcc=0.0, lastTick=None)
+	         trail=[], sendAcc=0.0, lastTick=None, view=None, glow=None, lastPx=None, flashes=[], touches=[], simNear={})
 
 
 reset()
@@ -87,6 +90,10 @@ def handle(address, args, fromSim=False):
 			S['objects'][i] = o
 		elif address == '/phonetwin/scan':
 			S['scan'] = str(a[0]) if a else ''
+		elif address == '/phonetwin/touch':
+			strength = float(a[3]) if len(a) > 3 else 1.0
+			S['flashes'].append(dict(x=S['pos'][0], y=S['pos'][1], at=now, s=strength))
+			S['touches'].append([int(a[0]), int(a[1]), str(a[2]) if len(a) > 2 else '', strength])
 	except (IndexError, ValueError, TypeError):
 		pass
 
@@ -128,6 +135,10 @@ def simulate(now):
 		handle('/phonetwin/object', [i, oid, name, label, floor, hand, cx, cy, cz, r * 100], True)
 		if hand < best[0]:
 			best = (hand, oid, name)
+		near = floor < 35
+		if near and not S['simNear'].get(i):
+			handle('/phonetwin/touch', [i, oid, name, 1.0], True)
+		S['simNear'][i] = near
 	d = best[0]
 	inten = 0.0 if d >= 30 else min(1.0, (30 - d) / 27)
 	handle('/phonetwin/nearest', [best[1] if d < 30 else -1, d if d < 30 else -1, inten, 1 if d <= 3 else 0, best[2] if d < 30 else ''], True)
@@ -161,7 +172,8 @@ def tick():
 
 	_tables()
 	_monitor()
-	for name in ('signals', 'map'):
+	_trail(dt, now)
+	for name in ('signals', 'map', 'light_trail'):
 		o = op(name)
 		if o is not None:
 			o.cook(force=True)
@@ -172,6 +184,7 @@ def tick():
 		S['sendAcc'] %= 1.0 / rate
 		if c.par.Outactive.eval():
 			_send()
+		S['touches'] = []
 
 
 def closest():
@@ -281,6 +294,135 @@ def _send():
 		prox.append(o['prox'])
 	if prox:
 		send('/td/proximity', prox)
+	for t in S['touches']:
+		send('/td/touch', t)
+
+
+def _par(name, default):
+	try:
+		return float(getattr(comp().par, name).eval())
+	except Exception:
+		return default
+
+
+def view():
+	"""(cx, cy, ext) of the top view: fits floor mark A and the objects; grows (and restarts the trail) only when the audience walks out of it."""
+	xs, ys = [0.0], [0.0]
+	for o in S['objects'].values():
+		r = o['r'] / 100
+		xs += [o['c'][0] - r, o['c'][0] + r]
+		ys += [o['c'][1] - r, o['c'][1] + r]
+	v = S['view']
+	key = (len(S['objects']), S['scan'])
+	if v is None or v[3] != key:
+		cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+		v = (cx, cy, max(max(xs) - min(xs), max(ys) - min(ys), 3.0) * 1.2, key)
+		S['view'], S['glow'], S['lastPx'] = v, None, None
+	if S['active']:
+		x, y = S['pos'][0], S['pos'][1]
+		if abs(x - v[0]) > v[2] * 0.45 or abs(y - v[1]) > v[2] * 0.45:
+			xs.append(x)
+			ys.append(y)
+			cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+			v = (cx, cy, max(max(xs) - min(xs), max(ys) - min(ys), 3.0) * 1.3, key)
+			S['view'], S['glow'], S['lastPx'] = v, None, None
+	return v[:3]
+
+
+TRAIL_SIZE = 512
+
+
+def _trail(dt, now):
+	"""Fades the light trail and paints the newest piece of the walk into it (numpy, every frame)."""
+	import numpy as np
+	W = TRAIL_SIZE
+	cx, cy, ext = view()
+	if S['glow'] is None:
+		S['glow'] = np.zeros((W, W, 3), np.float32)
+	g = S['glow']
+	fade = max(0.2, _par('Trailfade', 6.0))
+	if dt > 0:
+		g *= math.exp(-dt * math.log(2) / fade)   # Trailfade = seconds until the light is half as bright
+	S['flashes'] = [f for f in S['flashes'] if now - f['at'] < 2.5]
+	if not S['active']:
+		S['lastPx'] = None
+		return
+	sc = W / ext
+	X, Y = (S['pos'][0] - cx) * sc + W / 2, (S['pos'][1] - cy) * sc + W / 2
+	# colour: a slow cool drift (cyan -> violet), warmer near objects, brighter when walking faster
+	i, o = closest()
+	warm = o['prox'] if o else 0.0
+	hue = 0.5 + 0.12 * math.sin(now * 0.07)
+	r, gg, b = _hsv(hue - 0.42 * warm, 0.65 - 0.25 * warm, 1.0)
+	energy = 0.55 + 0.45 * _clamp01(S['speed'] / 1.2)
+	glow = max(0.0, _par('Trailglow', 1.0))
+	col = np.array([r, gg, b], np.float32) * energy * glow
+	width = max(2.0, _par('Trailwidth', 14.0) / 100 * sc)
+	if S['lastPx'] is not None:
+		x0, y0 = S['lastPx']
+		if math.hypot(X - x0, Y - y0) < W * 0.25:   # a jump (lost tracking) is not drawn as a streak
+			_stamp(g, x0, y0, X, Y, width * 0.5, col)
+	else:
+		_stamp(g, X, Y, X, Y, width * 0.5, col)
+	S['lastPx'] = (X, Y)
+	for f in S['flashes']:
+		if not f.get('done'):
+			f['done'] = True
+			fx, fy = (f['x'] - cx) * sc + W / 2, (f['y'] - cy) * sc + W / 2
+			_stamp(g, fx, fy, fx, fy, width * 1.6, np.array([1.0, 0.78, 0.45], np.float32) * f['s'] * glow)
+
+
+def _hsv(h, s, v):
+	import colorsys
+	return colorsys.hsv_to_rgb(h % 1.0, max(0.0, min(1.0, s)), v)
+
+
+def _stamp(buf, x0, y0, x1, y1, sigma, col):
+	"""Soft line (gaussian across) from (x0,y0) to (x1,y1), kept with max() so standing still never over-brightens."""
+	import numpy as np
+	H, W = buf.shape[:2]
+	pad = sigma * 3 + 1
+	bx0, bx1 = max(0, int(min(x0, x1) - pad)), min(W, int(max(x0, x1) + pad) + 1)
+	by0, by1 = max(0, int(min(y0, y1) - pad)), min(H, int(max(y0, y1) + pad) + 1)
+	if bx0 >= bx1 or by0 >= by1:
+		return
+	yy, xx = np.mgrid[by0:by1, bx0:bx1].astype(np.float32)
+	dx, dy = x1 - x0, y1 - y0
+	L2 = dx * dx + dy * dy
+	t = np.clip(((xx - x0) * dx + (yy - y0) * dy) / L2, 0, 1) if L2 > 1e-6 else 0.0
+	d2 = (xx - (x0 + t * dx)) ** 2 + (yy - (y0 + t * dy)) ** 2
+	a = np.exp(-d2 / (2 * sigma * sigma))[..., None]
+	sub = buf[by0:by1, bx0:bx1]
+	np.maximum(sub, a * col, out=sub)
+
+
+def draw_trail():
+	"""'light_trail' Script TOP: the glowing walk on black, a bright core where the audience is now, ripples where it touched."""
+	import numpy as np
+	W = TRAIL_SIZE
+	g = S['glow'] if S['glow'] is not None else np.zeros((W, W, 3), np.float32)
+	img = np.zeros((W, W, 4), np.float32)
+	img[..., :3] = g
+	now = absTime.seconds
+	if S['flashes'] and S['view'] is not None:
+		cx, cy, ext = S['view'][:3]
+		sc = W / ext
+		yy, xx = np.mgrid[0:W, 0:W].astype(np.float32)
+		for f in S['flashes']:
+			age = now - f['at']
+			fx, fy = (f['x'] - cx) * sc + W / 2, (f['y'] - cy) * sc + W / 2
+			rad, w = 8 + age * 0.55 * sc, 3.0
+			ring = np.exp(-((np.sqrt((xx - fx) ** 2 + (yy - fy) ** 2) - rad) ** 2) / (2 * w * w)) * max(0.0, 1 - age / 2.5) * f['s']
+			img[..., 0] += ring * 1.0
+			img[..., 1] += ring * 0.78
+			img[..., 2] += ring * 0.45
+	if S['active'] and S['lastPx'] is not None:
+		x, y = S['lastPx']
+		core = np.zeros((W, W, 3), np.float32)
+		_stamp(core, x, y, x, y, 5.0, np.array([1.0, 1.0, 1.0], np.float32))
+		img[..., :3] += core
+	img[..., 3] = np.clip(img[..., :3].max(axis=2), 0, 1)
+	return img
 
 
 def draw_map(size=512):
@@ -291,16 +433,7 @@ def draw_map(size=512):
 	img[..., 0], img[..., 1], img[..., 2], img[..., 3] = 0.035, 0.05, 0.075, 1.0
 	objs = [o for _, o in sorted(S['objects'].items())]
 	act = S['active']
-	xs, ys = [0.0], [0.0]
-	for o in objs:
-		r = o['r'] / 100
-		xs += [o['c'][0] - r, o['c'][0] + r]
-		ys += [o['c'][1] - r, o['c'][1] + r]
-	if act:
-		xs.append(S['pos'][0])
-		ys.append(S['pos'][1])
-	cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
-	ext = max(max(xs) - min(xs), max(ys) - min(ys), 3.0) * 1.2
+	cx, cy, ext = view()   # same framing as the light trail, so the two line up when composited
 	sc = W / ext
 
 	def px(x, y):
@@ -355,9 +488,6 @@ def draw_map(size=512):
 		if act and pr > 0:
 			line(S['pos'][0], S['pos'][1], o['c'][0], o['c'][1], (1.0, 0.75 - 0.5 * pr, 0.2), 0.35 + 0.65 * pr, 1 + int(pr * 3))
 	if act:
-		tr = S['trail']
-		for j in range(1, len(tr)):
-			line(tr[j - 1][0], tr[j - 1][1], tr[j][0], tr[j][1], (0.13, 0.83, 0.93), 0.15 + 0.5 * j / len(tr))
 		x, y = S['pos'][0], S['pos'][1]
 		ring(x, y, rng * sc, 1.0, (0.13, 0.83, 0.93), 0.25)   # Proxrange
 		h = math.radians(S['yaw'])

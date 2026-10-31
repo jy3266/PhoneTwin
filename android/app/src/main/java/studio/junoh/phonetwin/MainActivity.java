@@ -283,12 +283,13 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
 
         // 2. alignment
         panel.addView(section("2 · 정렬: 바닥의 두 점 A·B"));
-        panel.addView(row(button("스캔에서 A 탭", v -> startPick(PICK_A)), button("스캔에서 B 탭", v -> startPick(PICK_B))));
+        panel.addView(row(button("스캔 A·B 자동 (바닥 1m)", v -> new Thread(() -> { if (cloud == null) toastNote("먼저 스캔 파일을 여세요"); else { autoScanAB(cloud); toastNote(note); } }, "auto-ab").start()),
+            button("A 직접 탭", v -> startPick(PICK_A)), button("B 직접 탭", v -> startPick(PICK_B))));
         panel.addView(row(button("현장 A 조준·기록", v -> enterAim(1)), button("현장 B 조준·기록", v -> enterAim(2))));
         panel.addView(check("A–B 실측 거리로 스케일 보정 (사진측량 스캔용)", prefs.getBoolean("scale", false), s -> { useScale = s; prefs.edit().putBoolean("scale", s).apply(); alignDirty = true; }));
         useScale = prefs.getBoolean("scale", false);
         alignInfo = label("", 12); panel.addView(alignInfo);
-        panel.addView(label("바닥에 테이프로 A·B(1m 이상 간격)를 표시 → 3인칭 지도에서 같은 지점을 탭 → '현장 A 조준·기록'을 누르면 카메라 화면이 열립니다. 십자선과 바닥의 원을 테이프에 맞추고 '여기를 A로 기록'을 누르세요.", 11));
+        panel.addView(label("스캔 A·B는 앱이 스캔 바닥의 넓은 곳에 1m 간격으로 자동으로 정합니다(초록 A, 파랑 B). '현장 A 조준·기록'을 누르면 카메라 화면이 열리고, 바닥에 초록·파란 기둥(스캔 위치를 아는 경우) 또는 오른쪽 위 작은 지도에 A·B 위치가 보입니다. 그 바닥 지점에 십자선을 맞추고 '여기를 A로 기록'을 누르세요. B는 A에서 1m 떨어진 하얀 원 위에 있습니다. 위치를 바꾸고 싶으면 'A 직접 탭'·'B 직접 탭'.", 11));
 
         // 3. walking test
         panel.addView(section("3 · 걷기 테스트 (스캔한 공간을 들고 걸어 보기)"));
@@ -489,7 +490,13 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
     private void enterAim(int which) {
         if (session == null) { toastNote("AR이 실행 중이 아닙니다"); return; }
         aimTarget = which; setPanel(false); setView(VIEW_AR);
-        aimText.setText((which == 1 ? "현장 A" : "현장 B") + " 조준 중 · 바닥 테이프 " + (which == 1 ? "A" : "B") + " 지점에 십자선을 맞추세요.\n바닥이 인식되면 십자선이 초록색이 되고 바닥에 원이 보입니다.");
+        String m = which == 1 ? "A" : "B", color = which == 1 ? "초록" : "파란";
+        boolean other = which == 1 ? realB != null : realA != null;
+        aimText.setText("현장 " + m + " 조준 중 · " + (aligned
+                ? "바닥에 보이는 " + color + " 기둥(스캔 " + m + ") 아래에 십자선을 맞추세요."
+                : "오른쪽 위 스캔 지도의 " + color + " 점(" + m + ")과 같은 실제 바닥 지점에 십자선을 맞추세요.")
+            + (other ? "\n하얀 원 = 다른 점에서 스캔 A–B 거리만큼 떨어진 곳 · " + m + "는 이 원 위에 있습니다." : "")
+            + "\n바닥이 인식되면 십자선이 초록색이 됩니다.");
         aimRecord.setText("여기를 " + (which == 1 ? "A" : "B") + "로 기록");
         aimBar.setVisibility(View.VISIBLE);
     }
@@ -500,7 +507,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         if (on && scanning) { toastNote("스캔을 마친 뒤 걷기 테스트를 시작하세요"); return; }
         walkMode = on;
         if (on) { setPanel(false); if (view == VIEW_ORBIT) setView(VIEW_AR); if (obstacles == null) rebuildObstacles(); }
-        toastNote(on ? (aligned ? "걷기 테스트 시작 · 휴대폰을 들고 천천히 걸어 보세요" : "걷기 테스트 · 먼저 정렬이 필요합니다 (스캔 A·B, 현장 A·B)") : "걷기 테스트 종료 · 진동·소리·ESP32·언리얼 연동을 멈췄습니다");
+        toastNote(on ? (aligned ? "걷기 테스트 시작 · 휴대폰을 들고 천천히 걸어 보세요" : "걷기 테스트 대기 · 정렬되면 자동으로 시작합니다\n" + alignText) : "걷기 테스트 종료 · 진동·소리·ESP32·언리얼 연동을 멈췄습니다");
     }
     private void startPick(int mode) {
         if (cloud == null) { toastNote("먼저 스캔 파일을 여세요"); return; }
@@ -747,7 +754,9 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
                 index = idx; cloud = c; renderer.setCloud(c); obstacles = buildObstacles(c);
                 dist = Math.max(2f, c.extent()*1.1f); yaw = .8f; pitch = .7f;
                 alignDirty = true;
-                toastNote("스캔을 불러왔습니다 · 3인칭 지도에서 확인하세요");
+                boolean noMarks; synchronized (data) { noMarks = scanA == null || scanB == null; }
+                if (noMarks && autoScanAB(c)) toastNote("스캔을 불러왔습니다 · " + note);
+                else toastNote("스캔을 불러왔습니다 · 3인칭 지도에서 확인하세요");
             } catch (Throwable e) {
                 cloud = null; index = null;
                 toastNote("스캔 읽기 실패: " + e.getMessage());
@@ -770,6 +779,18 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         } catch (JSONException ignored) {}
         alignDirty = true; rebuildObstacles();
     }
+    /** Scan A·B picked by the app: 1 m apart on open floor of the scan (FloorMarks). Any thread; false if the floor is too small. */
+    private boolean autoScanAB(ScanLoader.Cloud c) {
+        if (c == null) return false;
+        float fy = ObstacleMap.estimateFloor(c.xyz, c.n, c.min[1], c.max[1]);
+        float[][] ab = FloorMarks.pick(c.xyz, c.n, c.min, c.max, fy, 1f);
+        if (ab == null) { note = "스캔 바닥이 좁아 A·B를 자동으로 정하지 못했습니다 · 2번에서 'A 직접 탭'·'B 직접 탭'으로 지정하세요"; return false; }
+        synchronized (data) { scanA = ab[0]; scanB = ab[1]; }
+        saveScanData();
+        note = String.format(Locale.US, "스캔 A·B를 바닥에 %.1fm 간격으로 자동 지정했습니다 · 2번에서 현장 A·B를 조준·기록하세요", Alignment.horizontal(ab[0], ab[1]));
+        return true;
+    }
+
     private void loadScanData() {
         try {
             JSONObject j = new JSONObject(prefs.getString("scan_data", "{}"));
@@ -924,6 +945,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
                     markers(mvp, false);
                 }
                 if (v == VIEW_AR && tracking) arWorldMarkers(camera, hit);
+                if (aimTarget != 0 && !(aligned && valid)) drawAimMap();
             }
 
             String reason = !tracking ? camera.getTrackingFailureReason().toString() : !aligned ? "ALIGN_NEEDED" : valid ? "TRACKING" : "ANCHOR_PAUSED";
@@ -1005,7 +1027,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         if (c0.n < 500) { minHits = 1; c0 = ls.toCloud("", 1); }
         ScanLoader.Cloud c = new ScanLoader.Cloud(c0.xyz, c0.rgb, c0.n, String.format(Locale.US, "휴대폰 스캔 (%s) · %,d점 (복셀 %,d개 중 %d회 이상 관측)", depthSupported ? "깊이" : "특징점", c0.n, ls.n, minHits));
         float[] a = null, b = null;
-        if (realA != null && realB != null && realA.getTrackingState() == TrackingState.TRACKING && realB.getTrackingState() == TrackingState.TRACKING) {
+        if (realA != null && realB != null && realA.getTrackingState() != TrackingState.STOPPED && realB.getTrackingState() != TrackingState.STOPPED) {
             float[] wa = realA.getPose().getTranslation(), wb = realB.getPose().getTranslation();
             a = new float[]{wa[0]-sh[0], wa[1]-sh[1], wa[2]-sh[2]}; b = new float[]{wb[0]-sh[0], wb[1]-sh[1], wb[2]-sh[2]};
         }
@@ -1025,7 +1047,9 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         saveScanData();
         dist = Math.max(2f, c.extent()*1.1f); yaw = .8f; pitch = .7f;
         note = "스캔 완료 · 저장 중…";
+        final boolean noMarks = a == null;
         new Thread(() -> {
+            if (noMarks) autoScanAB(c);   // no floor marks recorded before the scan: pick scan A·B on its floor
             SurfaceIndex idx = SurfaceIndex.build(c.xyz, c.n, .03f, c.min, c.max);
             index = idx;
             ObstacleMap om = buildObstacles(c); obstacles = om;
@@ -1146,20 +1170,42 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         return null;
     }
 
+    /** Shortest usable A–B baseline; under 1m only a warning is shown. */
+    static final float MIN_AB = .15f;
     /** GL thread: rebuild the origin anchor from scan A/B + real A/B. */
     private void align() {
         alignDirty = false;
         float[] sa, sb; synchronized (data) { sa = scanA; sb = scanB; }
+        if (liveAlign && (sa == null || sb == null) && realA != null && realB != null && origin != null
+                && realA.getTrackingState() != TrackingState.STOPPED && realB.getTrackingState() != TrackingState.STOPPED) {
+            // the scan was made in this run, so its frame is known: the floor marks recorded now become the scan's A·B too
+            float[] am = new float[16], wfs = new float[16], sfw = new float[16];
+            origin.getPose().toMatrix(am, 0); Matrix.multiplyMM(wfs, 0, am, 0, mLS, 0); Matrix.invertM(sfw, 0, wfs, 0);
+            float[] a = xf(sfw, realA.getPose().getTranslation()), b = xf(sfw, realB.getPose().getTranslation());
+            synchronized (data) { scanA = a; scanB = b; }
+            saveScanData();   // marks alignDirty: the next frame aligns with all four points
+            note = "현장 A·B를 이 스캔의 A·B로도 저장했습니다 · 다음 실행에서도 현장 A·B만 기록하면 정렬됩니다";
+            return;
+        }
         if (liveAlign && (sa == null || sb == null || realA == null || realB == null)) return;   // keep the post-scan alignment
         if (cloud == null || sa == null || sb == null || realA == null || realB == null) {
             aligned = false;
-            alignText = cloud == null ? "스캔을 먼저 여세요" : "정렬 전 · 네 지점(스캔 A·B, 현장 A·B)이 모두 필요합니다";
+            alignText = cloud == null ? "스캔을 먼저 여세요"
+                : sa == null || sb == null ? "정렬 전 · 이 스캔에 스캔 A·B가 없습니다 · 2번 '스캔에서 A 탭'·'스캔에서 B 탭'으로 바닥 두 점을 지정하세요"
+                : "정렬 전 · 2번에서 현장 " + (realA == null && realB == null ? "A·B" : realA == null ? "A" : "B") + "를 기록하세요";
             return;
         }
-        if (realA.getTrackingState() != TrackingState.TRACKING || realB.getTrackingState() != TrackingState.TRACKING) { alignDirty = true; return; }
+        // a PAUSED anchor still holds its last pose; only a STOPPED one is gone
+        if (realA.getTrackingState() == TrackingState.STOPPED || realB.getTrackingState() == TrackingState.STOPPED) {
+            aligned = false; alignText = "현장 A·B 기록이 사라졌습니다 · 2번에서 다시 기록하세요"; return;
+        }
         float[] a = realA.getPose().getTranslation(), b = realB.getPose().getTranslation();
         float realD = Alignment.horizontal(a, b), scanD = Alignment.horizontal(sa, sb);
-        if (realD < .5f || scanD < .05f) { aligned = false; alignText = "A–B 간격이 너무 짧습니다 (0.5m 이상, 가능하면 2m 이상)"; return; }
+        if (realD < MIN_AB || scanD < MIN_AB) {
+            aligned = false;
+            alignText = String.format(Locale.US, "A–B 간격이 너무 짧습니다 (스캔 %.2f / 현장 %.2f m · %.0fcm 이상, 가능하면 2m 이상)", scanD, realD, MIN_AB*100);
+            return;
+        }
         float s = useScale ? realD/scanD : 1f;
         float[] q = Alignment.yawFacing((b[0]-a[0])/realD, (b[2]-a[2])/realD);
         Anchor next = session.createAnchor(new Pose(a, q));
@@ -1167,12 +1213,14 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         origin = next; epoch++; mLS = Alignment.scanToLocal(sa, sb, s); scale = s; aligned = true; liveAlign = false;
         float diff = (realD/scanD - 1)*100;
         alignText = String.format(Locale.US, "정렬 완료 · 스캔 A–B %.2f / 현장 %.2f m · 차이 %+.1f%%%s", scanD, realD, diff,
-            useScale ? String.format(Locale.US, " → 스케일 %.3f 적용", s) : Math.abs(diff) > 3 ? "\n차이가 큽니다: 지점 재확인 또는 스케일 보정 사용" : "");
+            (useScale ? String.format(Locale.US, " → 스케일 %.3f 적용", s) : Math.abs(diff) > 3 ? "\n차이가 큽니다: 지점 재확인 또는 스케일 보정 사용" : "")
+            + (Math.min(realD, scanD) < 1f ? "\nA–B가 1m보다 짧아 방향 오차가 큽니다 · 다음엔 2~3m 간격 권장" : ""));
+        if (walkMode) note = "정렬 완료 · 걷기 테스트 연동을 시작합니다";
     }
 
     /** GL thread: hand position in the scan, nearest surface/object, feedback. */
     private void twin(Camera camera, boolean tracking) {
-        boolean ok = tracking && aligned && origin != null && origin.getTrackingState() == TrackingState.TRACKING;
+        boolean ok = tracking && aligned && origin != null && origin.getTrackingState() != TrackingState.STOPPED;
         valid = ok;
         if (!ok) { feedback.update(false, 0, false, -1, Float.POSITIVE_INFINITY); hudNear = hudAhead = Float.POSITIVE_INFINITY; hudDeadEnd = false; hudDist = Float.POSITIVE_INFINITY; hudIntensity = 0; hudObj = -1; hudContact = false; activeObj = -1; nearOn = false; return; }
         origin.getPose().toMatrix(anchorM, 0);
@@ -1304,7 +1352,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
                 aiOn ? "\nAI: " + (detector.lastSeen.isEmpty() ? "사물을 찾는 중" : detector.lastSeen) + " (관측 " + seen + ")" : "");
         }
         if (aimTarget != 0) return floorHit ? "바닥 인식됨 · 원을 테이프 지점에 맞추고 기록 버튼을 누르세요" : "바닥을 찾는 중 · 바닥을 비추며 휴대폰을 천천히 움직이세요";
-        if (!valid) return cloud == null ? "스캔 없음 · 설정 ▼ 에서 스캔 파일을 여세요" : !aligned ? "정렬 전 · 스캔 A·B, 현장 A·B를 지정하세요" : "추적 대기 중 · 카메라로 주변을 비추세요";
+        if (!valid) return cloud == null ? "스캔 없음 · 설정 ▼ 에서 스캔 파일을 여세요" : !aligned ? alignText : "추적 대기 중 · 카메라로 주변을 비추세요";
         if (!walkMode) return "정렬 완료 · 위쪽 '🚶 걷기 테스트 시작'을 누르면 진동·소리·ESP32·언리얼 연동이 시작됩니다";
         float d = hudDist, i = hudIntensity; int o = hudObj;
         StringBuilder bar = new StringBuilder(); int n = Math.round(i*12); for (int k = 0; k < 12; k++) bar.append(k < n ? '█' : '·');
@@ -1337,6 +1385,49 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
             float[] t = hit.getHitPose().getTranslation(); boolean isA = aimTarget == 1;
             ring(w, t, .12f, isA ? .2f : .3f, isA ? 1f : .6f, isA ? .4f : 1f); ring(w, t, .03f, 1f, 1f, 1f);
         }
+        if (aimTarget == 0) return;
+        float[] sa, sb; synchronized (data) { sa = scanA; sb = scanB; }
+        if (sa == null || sb == null) return;
+        if (aligned && valid) {
+            // the scan's place in the room is known: stand pillars on its A·B so the crosshair can go right under them
+            for (int k = 0; k < 2; k++) {
+                float[] p = xf(worldFromS, k == 0 ? sa : sb); boolean aimed = aimTarget == k + 1;
+                float r = k == 0 ? .2f : .3f, g = k == 0 ? 1f : .6f, bl = k == 0 ? .4f : 1f;
+                ring(w, p, .15f, r, g, bl); if (aimed) { ring(w, p, .22f, r, g, bl); ring(w, p, .3f, r, g, bl); }
+                renderer.drawShape(w, new float[]{p[0], p[1], p[2], p[0], p[1] + (aimed ? 1.2f : .6f), p[2]}, 6, GLES20.GL_LINES, r, g, bl, 1);
+                renderer.drawShape(w, p, 3, GLES20.GL_POINTS, r, g, bl, dp(aimed ? 14 : 9));
+            }
+        } else {
+            // one real mark is down: the other one lies on a circle of the scan's A–B distance around it
+            float[] o = aimTarget == 2 ? a : b;
+            if (o != null) { float d = Alignment.horizontal(sa, sb); ring(w, o, d, 1f, 1f, 1f); ring(w, o, d + .02f, 1f, 1f, 1f); }
+        }
+    }
+
+    /** While aiming without a known scan placement: a top-down map of the scan in the corner with scan A (green) and B (blue). */
+    private void drawAimMap() {
+        ScanLoader.Cloud c = cloud; float[] sa, sb; synchronized (data) { sa = scanA; sb = scanB; }
+        if (c == null || sa == null || sb == null) return;
+        int s = Math.round(Math.min(width, heightPx)*.42f), x = width - s - dp(8), y = heightPx - s - dp(110);
+        GLES20.glViewport(x, y, s, s);
+        GLES20.glEnable(GLES20.GL_SCISSOR_TEST); GLES20.glScissor(x, y, s, s);
+        GLES20.glClearColor(.02f, .03f, .05f, 1); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
+        GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
+        // look straight down, A→B pointing up the map, whole scan in view
+        float d = Alignment.horizontal(sa, sb), ux = (sb[0]-sa[0])/d, uz = (sb[2]-sa[2])/d;
+        float cx = (c.min[0]+c.max[0])/2, cz = (c.min[2]+c.max[2])/2, half = Math.max(c.max[0]-c.min[0], c.max[2]-c.min[2])*.55f;
+        float eyeY = c.max[1] + 5;
+        float[] v = new float[16], p = new float[16], m = new float[16], mvp2 = new float[16];
+        Matrix.setLookAtM(v, 0, cx, eyeY, cz, cx, c.min[1], cz, ux, 0, uz);
+        Matrix.orthoM(p, 0, -half, half, -half, half, .1f, eyeY - c.min[1] + 5);
+        renderer.drawPoints(v, p, 2.5f*(eyeY - sa[1]), new float[3], 0, 1f);
+        Matrix.multiplyMM(mvp2, 0, p, 0, v, 0);
+        renderer.drawShape(mvp2, new float[]{sa[0], sa[1], sa[2], sb[0], sb[1], sb[2]}, 6, GLES20.GL_LINES, 1f, 1f, 1f, 1);
+        renderer.drawShape(mvp2, sa, 3, GLES20.GL_POINTS, .2f, 1f, .4f, dp(aimTarget == 1 ? 16 : 10));
+        renderer.drawShape(mvp2, sb, 3, GLES20.GL_POINTS, .3f, .6f, 1f, dp(aimTarget == 2 ? 16 : 10));
+        Matrix.setIdentityM(m, 0);
+        renderer.drawShape(m, new float[]{-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0}, 12, GLES20.GL_LINE_LOOP, .6f, .7f, .8f, 1);
+        GLES20.glViewport(viewX, viewY, viewW, viewH);
     }
     private void ring(float[] mvp, float[] c, float rad, float r, float g, float b) {
         final int seg = 32; float[] v = new float[seg*3];

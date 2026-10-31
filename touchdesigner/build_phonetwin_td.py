@@ -76,6 +76,12 @@ def onCook(scriptOp):
 	return
 '''
 
+TRAIL_CB = '''# 빛 흔적: 관객이 걸은 길이 빛으로 남았다가 천천히 사라짐 (Trailfade 초마다 반으로), 닿은 곳은 따뜻한 빛 물결
+def onCook(scriptOp):
+	scriptOp.copyNumpyArray(op('phonetwin_core').module.draw_trail())
+	return
+'''
+
 MAP_CB = '''# 위에서 본 지도: 격자 1 m, 바닥 표시 A(초록), 사물(노랑, 가까울수록 진하게), 관객(하늘색)과 진행 방향
 def onCook(scriptOp):
 	scriptOp.copyNumpyArray(op('phonetwin_core').module.draw_map(512))
@@ -111,6 +117,12 @@ README = '''PHONE TWIN · TouchDesigner (OSC 입·출력)
  /td/nearest    index id proximity floorCm name
  /td/object/<i> proximity(0~1) floorCm approach(cm/s, 다가오면 +) id name
  /td/proximity  모든 사물의 proximity (index 순서)
+ /td/touch      index id name strength   (관객이 사물에 닿은 순간)
+
+[빛 흔적]
+ trail_out TOP = 관객이 걸어온 길이 빛으로 남는 영상(검은 배경). 프로젝터·화면에 그대로 내보내면 됩니다.
+ 오른쪽 지도(map_light)에도 겹쳐 보입니다. 설정: Trailfade(사라지는 속도), Trailwidth(굵기), Trailglow(밝기).
+ 색은 천천히 청록↔보라로 흐르고, 사물에 가까워질수록 따뜻한 금빛, 빨리 걸을수록 밝아집니다. 닿으면 금빛 물결.
 
 [signals_out 채널]
  active live sim source tx ty tz heading vx vy vz speed accel energy moving haptic contact
@@ -121,7 +133,7 @@ README = '''PHONE TWIN · TouchDesigner (OSC 입·출력)
 def build():
 	root = op('/project1')
 	for c in list(root.children):
-		if c.name != 'bootstrap':
+		if c.valid and c.name != 'bootstrap':   # destroying an operator also removes its docked callbacks DAT
 			c.destroy()
 
 	# ---- settings as custom parameters on /project1
@@ -145,6 +157,9 @@ def build():
 	par('Float', 'Proxrange', '근접 범위 (cm, 이 거리에서 0 → 붙으면 1)', 200.0, normMin=20, normMax=600, min=1, clampMin=True)
 	par('Float', 'Smoothing', '부드럽게 (초)', 0.15, normMin=0, normMax=1, min=0, clampMin=True)
 	par('Toggle', 'Simulate', '신호 없을 때 시뮬레이션', True)
+	par('Float', 'Trailfade', '빛 흔적: 반으로 어두워지는 시간 (초)', 6.0, normMin=0.5, normMax=60, min=0.2, clampMin=True)
+	par('Float', 'Trailwidth', '빛 흔적: 굵기 (cm)', 14.0, normMin=2, normMax=60, min=1, clampMin=True)
+	par('Float', 'Trailglow', '빛 흔적: 밝기', 1.0, normMin=0, normMax=3, min=0, clampMin=True)
 
 	core_text = open(CORE, encoding='utf-8').read()
 
@@ -189,7 +204,23 @@ def build():
 	setp(sv, 'positiony', -16)
 
 	lay = make(root, layoutTOP, 'layout', 200, 0)
-	lay.inputConnectors[0].connect(mp)
+	# light trail: numpy trace (light_trail) -> blur halo -> added together = glow; the map view gets the glow on top
+	lt = make(root, scriptTOP, 'light_trail', 0, -400)
+	callbacks_for(root, lt, TRAIL_CB, 0, -560)
+	blur = make(root, blurTOP, 'trail_blur', 200, -480)
+	blur.inputConnectors[0].connect(lt)
+	setp(blur, 'size', 24)
+	glow = make(root, compositeTOP, 'trail_glow', 400, -400)
+	glow.inputConnectors[0].connect(lt)
+	glow.inputConnectors[1].connect(blur)
+	setp(glow, 'operand', 'add')
+	trail_out = make(root, nullTOP, 'trail_out', 600, -400)
+	trail_out.inputConnectors[0].connect(glow)
+	ml = make(root, compositeTOP, 'map_light', 200, 160)
+	ml.inputConnectors[0].connect(mp)
+	ml.inputConnectors[1].connect(glow)
+	setp(ml, 'operand', 'add')
+	lay.inputConnectors[0].connect(ml)
 	lay.inputConnectors[1].connect(sv)
 	setp(lay, 'outputresolution', 'custom')
 	setp(lay, 'resolutionw', 1152)
@@ -208,7 +239,7 @@ def build():
 		o.viewer = False
 
 	# record parameter names so a wrong name above shows up in the log
-	for o in (osc_in, osc_out, fx, sig, mp, sv, lay):
+	for o in (osc_in, osc_out, fx, sig, mp, sv, lay, lt, blur, glow, ml):
 		log('PARS', o.path, o.OPType, ' '.join(p.name for p in o.pars()))
 	for o in root.children:
 		log('OP', o.path, o.OPType, 'errors=' + repr(o.errors()), 'warnings=' + repr(o.warnings()))

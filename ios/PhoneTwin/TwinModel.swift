@@ -155,7 +155,7 @@ final class TwinModel: NSObject, ObservableObject, ARSessionDelegate {
             if on && scanning { note = "스캔을 마친 뒤 걷기 테스트를 시작하세요"; return }
             walkMode = on
             if on && obstacles == nil { rebuildObstacles() }
-            note = on ? (aligned ? "걷기 테스트 시작 · 휴대폰을 들고 천천히 걸어 보세요" : "걷기 테스트 · 먼저 정렬이 필요합니다 (스캔 A·B, 현장 A·B)")
+            note = on ? (aligned ? "걷기 테스트 시작 · 휴대폰을 들고 천천히 걸어 보세요" : "걷기 테스트 대기 · 정렬되면 자동으로 시작합니다\n" + alignText)
                 : "걷기 테스트 종료 · 진동·소리·ESP32·언리얼 연동을 멈췄습니다"
             DispatchQueue.main.async { [self] in
                 walkUI = on
@@ -293,23 +293,38 @@ final class TwinModel: NSObject, ObservableObject, ARSessionDelegate {
 
     // ------------------------------------------------------------------ alignment (arQueue)
     private func align(_ ra: SIMD3<Float>?, _ rb: SIMD3<Float>?) {
+        if let m = liveAlign, data.scanA == nil || data.scanB == nil, let ra = ra, let rb = rb {
+            // the scan was made in this run, so its frame is known: the floor marks recorded now become the scan's A·B too
+            let inv = m.inverse
+            data.a = ScanData.arr(inv.point(ra)); data.b = ScanData.arr(inv.point(rb))
+            saveScanData()
+            note = "현장 A·B를 이 스캔의 A·B로도 저장했습니다 · 다음 실행에서도 현장 A·B만 기록하면 정렬됩니다"
+        }
         let sa = data.scanA, sb = data.scanB
         if let m = liveAlign, sa == nil || sb == nil || ra == nil || rb == nil {   // keep the post-scan alignment
             worldFromS = m; sFromWorld = m.inverse; scale = 1; aligned = true; return
         }
         guard cloud != nil, let sa = sa, let sb = sb, let ra = ra, let rb = rb else {
             aligned = false
-            alignText = cloud == nil ? "스캔을 먼저 여세요" : "정렬 전 · 네 지점(스캔 A·B, 현장 A·B)이 모두 필요합니다"
+            alignText = cloud == nil ? "스캔을 먼저 여세요"
+                : sa == nil || sb == nil ? "정렬 전 · 이 스캔에 스캔 A·B가 없습니다 · 2번에서 3인칭 지도의 바닥 두 점을 탭하세요"
+                : "정렬 전 · 2번에서 현장 " + (ra == nil && rb == nil ? "A·B" : ra == nil ? "A" : "B") + "를 기록하세요"
             return
         }
         let realD = Alignment.horizontal(ra, rb), scanD = Alignment.horizontal(sa, sb)
-        if realD < 0.5 || scanD < 0.05 { aligned = false; alignText = "A–B 간격이 너무 짧습니다 (0.5m 이상, 가능하면 2m 이상)"; return }
+        let minAB: Float = 0.15   // shortest usable baseline; under 1m only a warning
+        if realD < minAB || scanD < minAB {
+            aligned = false
+            alignText = String(format: "A–B 간격이 너무 짧습니다 (스캔 %.2f / 현장 %.2f m · %.0fcm 이상, 가능하면 2m 이상)", scanD, realD, minAB*100)
+            return
+        }
         let useScale = Prefs.useScale, s = useScale ? realD/scanD : 1
         guard let wl = Alignment.worldFromLocal(ra, rb), let ls = Alignment.scanToLocal(sa, sb, scale: s) else { aligned = false; return }
         worldFromS = wl*ls; sFromWorld = worldFromS.inverse; scale = s; aligned = true; liveAlign = nil
         let diff = (realD/scanD - 1)*100
         alignText = String(format: "정렬 완료 · 스캔 A–B %.2f / 현장 %.2f m · 차이 %+.1f%%", scanD, realD, diff)
             + (useScale ? String(format: " → 스케일 %.3f 적용", s) : abs(diff) > 3 ? "\n차이가 큽니다: 지점 재확인 또는 스케일 보정 사용" : "")
+            + (min(realD, scanD) < 1 ? "\nA–B가 1m보다 짧아 방향 오차가 큽니다 · 다음엔 2~3m 간격 권장" : "")
     }
 
     // ------------------------------------------------------------------ twin + walking test (arQueue)
@@ -793,7 +808,7 @@ final class TwinModel: NSObject, ObservableObject, ARSessionDelegate {
             return "● 스캔 중  \(n.formatted())점 (\(n*100/TwinModel.liveCap)%) · \(lidar ? "LiDAR" : "특징점")\n천천히 훑어 빈 곳을 채우세요 · 끝나면 완료·저장"
         }
         if aim != 0 { return floorHit ? "바닥 인식됨 · 원을 테이프 지점에 맞추고 기록 버튼을 누르세요" : "바닥을 찾는 중 · 바닥을 비추며 휴대폰을 천천히 움직이세요" }
-        if !valid { return cloud == nil ? "스캔 없음 · 설정에서 스캔하거나 스캔 파일을 여세요" : !aligned ? "정렬 전 · 스캔 A·B, 현장 A·B를 지정하세요" : "추적 대기 중 · 카메라로 주변을 비추세요" }
+        if !valid { return cloud == nil ? "스캔 없음 · 설정에서 스캔하거나 스캔 파일을 여세요" : !aligned ? alignText : "추적 대기 중 · 카메라로 주변을 비추세요" }
         if !walkMode { return "정렬 완료 · 위쪽 '🚶 걷기 테스트 시작'을 누르면 진동·소리·ESP32·언리얼 연동이 시작됩니다" }
         let i = hudIntensity, o = hudObj
         let bar = String(repeating: "█", count: Int((i*12).rounded())) + String(repeating: "·", count: 12 - Int((i*12).rounded()))
