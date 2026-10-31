@@ -1,0 +1,21 @@
+body.editor { display: grid; grid-template: auto 1fr / 280px 1fr 320px; height: 100vh; overflow: hidden; }
+body.editor .top { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; }
+body.editor .top select { max-width: 300px; }
+body.editor .side { position: static; transform: none; width: auto; height: auto; overflow-y: auto; }
+body.editor .stage { position: relative; min-width: 0; min-height: 0; height: auto; margin: 0; inset: auto; }
+body.editor .stage canvas { width: 100%; height: 100%; display: block; }
+.editor button.primary { background: #0e7490; border-color: #0e7490; color: #fff; }
+.editor button.danger { color: #fca5a5; }
+.editor #dirty { margin-left: auto; }
+.editor .list li.on { outline: 1px solid #67e8f9; }
+.editor .list li .meta { display: flex; gap: 6px; }
+.editor .tag { color: #fbbf24; }
+.tools { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin-bottom: 8px; }
+.tools button { padding: 6px 0; font-size: 12px; }
+.tools button.on { background: #0e7490; color: #fff; }
+.mode, .toast { position: absolute; left: 50%; transform: translateX(-50%); padding: 6px 12px; border-radius: 6px; background: rgba(8, 14, 20, .85); color: #e5edf5; font-size: 13px; pointer-events: none; }
+.mode { top: 10px; }
+.toast { bottom: 18px; }
+.editor select, .editor input[type=text] { width: 100%; box-sizing: border-box; background: #0b1016; color: #e5edf5; border: 1px solid #1f2c3a; border-radius: 4px; padding: 5px; }
+.editor .top select { width: auto; }
+@media (max-width: 900px) { body.editor { grid-template: auto 45vh auto auto / 1fr; height: auto; overflow: auto; } body.editor .stage { grid-row: 2; } }

@@ -81,6 +81,7 @@ private:
 	void Fetch(const FString& Path, TFunction<void(bool bOk, int32 Code, const TArray<uint8>& Data)> Done, bool bRaw = false);
 	void Next();
 	void Finish(bool bOk, const FString& Message);
+	static void RunScanTools();
 
 	bool bRunning = false;
 	FString Status = TEXT("GitHub 동기화 전");

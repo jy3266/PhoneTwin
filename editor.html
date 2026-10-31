@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phone Twin 콜리전 편집기</title>
+  <link rel="stylesheet" href="web/style.css">
+  <link rel="stylesheet" href="web/editor.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body class="editor">
+  <header class="top">
+    <h1>PHONE TWIN <span>· 콜리전·소리 편집기</span></h1>
+    <select id="scan" aria-label="스캔 선택"></select>
+    <span id="dirty" class="scan-title"></span>
+    <button id="undo" title="Ctrl+Z">되돌리기</button>
+    <button id="save" class="primary" title="Ctrl+S">저장 (언리얼·웹에 반영)</button>
+  </header>
+
+  <aside class="side open" id="left">
+    <section>
+      <h2>콜리전 <span id="count" class="muted"></span></h2>
+      <ul id="list" class="list"></ul>
+      <div class="buttons"><button id="addGrow">클릭해서 추가</button><button id="addBox">상자 추가</button></div>
+    </section>
+    <section>
+      <h2>보기</h2>
+      <label class="slider">점 크기 <input id="size" type="range" min="1" max="8" step="0.5" value="2.5"><output id="sizeOut">2.5</output></label>
+      <label class="check"><input id="showAll" type="checkbox" checked> 모든 콜리전 표시</label>
+      <div class="buttons"><button data-view="top">위에서</button><button data-view="iso">비스듬히</button><button data-view="focus">선택 확대</button></div>
+    </section>
+    <p class="hint">원본 스캔은 그대로 두고 복제본만 씁니다. 편집 내용은 별도 파일에 저장되며 저장할 때마다 이전 판이 collisions/history에 남습니다.</p>
+  </aside>
+
+  <main id="stage" class="stage">
+    <div id="labels" class="labels"></div>
+    <div id="mode" class="mode" hidden></div>
+    <div id="toast" class="toast" hidden></div>
+    <div id="empty" class="empty" hidden></div>
+  </main>
+
+  <aside class="side right open" id="right">
+    <section id="noSel"><p class="hint">왼쪽 목록이나 화면의 콜리전을 누르면 여기서 고칠 수 있습니다.</p></section>
+    <div id="sel" hidden>
+      <section>
+        <h2>이름</h2>
+        <label class="field"><input id="name" type="text" autocomplete="off"></label>
+        <div id="shapeInfo" class="info muted"></div>
+      </section>
+      <section>
+        <h2>모양 고치기</h2>
+        <div class="tools" role="group" aria-label="도구">
+          <button data-tool="orbit" title="1">보기만</button>
+          <button data-tool="erase" title="2">지우기</button>
+          <button data-tool="paint" title="3">칠하기</button>
+          <button data-tool="move" title="4">옮기기</button>
+          <button data-tool="scale" title="5">크기</button>
+        </div>
+        <label class="slider">붓 크기 <input id="brush" type="range" min="0" max="6" step="1" value="1"><output id="brushOut">1</output></label>
+        <p class="hint">지우기: 칸을 드래그. 칠하기: 스캔 점 위를 드래그. 시점 돌리기: 오른쪽 버튼 드래그.</p>
+        <div class="buttons"><button id="regrow">이 자리에서 다시 찾기</button><button id="remove" class="danger">삭제</button></div>
+        <label class="slider">찾는 범위 <input id="reach" type="range" min="0.1" max="2" step="0.05" value="0.6"><output id="reachOut">0.60 m</output></label>
+      </section>
+      <section>
+        <h2>소리</h2>
+        <label class="field">다가갈 때 (반복)<select id="nearSound"></select></label>
+        <div class="buttons"><button id="playNear">▶ 듣기</button><label class="file">파일 넣기<input id="nearFile" type="file" accept="audio/*"></label></div>
+        <label class="field">닿을 때 (한 번)<select id="touchSound"></select></label>
+        <div class="buttons"><button id="playTouch">▶ 듣기</button><label class="file">파일 넣기<input id="touchFile" type="file" accept="audio/*"></label></div>
+        <label class="field">언리얼 사운드 에셋 (선택)<input id="assetPath" type="text" placeholder="/Game/Sounds/MySound" autocomplete="off" spellcheck="false"></label>
+        <label class="slider">볼륨 <input id="volume" type="range" min="0" max="2" step="0.05"><output id="volumeOut"></output></label>
+        <label class="slider">최대 크기 거리 <input id="fullDistance" type="range" min="0" max="5" step="0.05"><output id="fullOut"></output></label>
+        <label class="slider">들리기 시작 거리 <input id="maxDistance" type="range" min="0.2" max="12" step="0.1"><output id="maxOut"></output></label>
+        <label class="check"><input id="muted" type="checkbox"> 이 콜리전 소리 끄기</label>
+        <p class="hint">파일을 비워 두면 사물에 맞는 내장 소리를 씁니다. 표면에서 잰 거리로 크기가 바뀝니다.</p>
+      </section>
+      <section>
+        <h2>거리 시험</h2>
+        <label class="check"><input id="walk" type="checkbox"> 화면 바닥을 클릭해 관객 세우기</label>
+        <div id="walkInfo" class="info muted">소리를 켠 뒤 관객을 옮겨 보세요.</div>
+      </section>
+    </div>
+  </aside>
+
+  <script type="module" src="web/editor.js"></script>
+</body>
+</html>

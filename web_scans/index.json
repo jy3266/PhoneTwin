@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "scans": [
+    {
+      "id": "phone_scan_20261030_2121",
+      "ply": "web_scans/phone_scan_20261030_2121.ply",
+      "meta": "web_scans/phone_scan_20261030_2121.json",
+      "points": 22648,
+      "created": "2026-10-30T21:21:42+09:00",
+      "device": "SM-F966N"
+    },
+    {
+      "id": "phone_scan_20261030_2120",
+      "ply": "web_scans/phone_scan_20261030_2120.ply",
+      "meta": "web_scans/phone_scan_20261030_2120.json",
+      "points": 19952,
+      "created": "2026-10-30T21:20:35+09:00",
+      "device": "SM-F966N"
+    },
+    {
+      "id": "phone_scan_20261030_1421",
+      "ply": "web_scans/phone_scan_20261030_1421.ply",
+      "meta": "web_scans/phone_scan_20261030_1421.json",
+      "points": 327689,
+      "created": "2026-10-30T14:21:55+09:00",
+      "device": "SM-F966N"
+    },
+    {
+      "id": "phone_scan_20261030_1417",
+      "ply": "web_scans/phone_scan_20261030_1417.ply",
+      "meta": "web_scans/phone_scan_20261030_1417.json",
+      "points": 200828,
+      "created": "2026-10-30T14:17:40+09:00",
+      "device": "SM-F966N"
+    },
+    {
+      "id": "phone_scan_20261030_1311",
+      "ply": "web_scans/phone_scan_20261030_1311.ply",
+      "meta": "web_scans/phone_scan_20261030_1311.json",
+      "points": 452820,
+      "created": "2026-10-30T13:11:38+09:00",
+      "device": "SM-F966N"
+    },
+    {
+      "id": "phone_scan_20261029_0110",
+      "ply": "web_scans/phone_scan_20261029_0110.ply",
+      "meta": "web_scans/phone_scan_20261029_0110.json",
+      "points": 455200,
+      "created": "2026-10-29T01:10:20+09:00",
+      "device": "SM-F966N"
+    },
+    {
+      "id": "phone_scan_20261020_1032",
+      "ply": "web_scans/phone_scan_20261020_1032.ply",
+      "meta": "web_scans/phone_scan_20261020_1032.json",
+      "points": 19918,
+      "created": "2026-10-20T10:32:38+09:00",
+      "device": "SM-F966N"
+    },
+    {
+      "id": "phone_scan_20261020_1024",
+      "ply": "web_scans/phone_scan_20261020_1024.ply",
+      "meta": "web_scans/phone_scan_20261020_1024.json",
+      "points": 107020,
+      "created": "2026-10-20T10:24:24+09:00",
+      "device": "SM-F966N"
+    },
+    {
+      "id": "phone_scan_20261020_1011",
+      "ply": "web_scans/phone_scan_20261020_1011.ply",
+      "meta": "web_scans/phone_scan_20261020_1011.json",
+      "points": 157478,
+      "created": "2026-10-20T10:11:29+09:00",
+      "device": "SM-F966N"
+    },
+    {
+      "id": "phone_scan_20261011_1604",
+      "ply": "web_scans/phone_scan_20261011_1604.ply",
+      "meta": "web_scans/phone_scan_20261011_1604.json",
+      "points": 64526,
+      "created": "2026-10-11T16:04:47+09:00",
+      "device": "SM-F966N"
+    },
+    {
+      "id": "phone_scan_20261011_1544",
+      "ply": "web_scans/phone_scan_20261011_1544.ply",
+      "meta": "web_scans/phone_scan_20261011_1544.json",
+      "points": 153438,
+      "created": "2026-10-11T15:44:43+09:00",
+      "device": "SM-F966N"
+    },
+    {
+      "id": "sample_test_room",
+      "ply": "web_scans/sample_test_room.ply",
+      "meta": "web_scans/sample_test_room.json",
+      "points": 58006,
+      "created": "2026-10-11T12:00:00+09:00",
+      "device": "PC 시험용"
+    }
+  ]
+}

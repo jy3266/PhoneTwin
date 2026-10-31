@@ -3,6 +3,8 @@
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
 #include "PhoneTwinCore.h"
+#include "PhoneTwinCloud.h"
+#include "PhoneTwinCalmSound.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 using namespace PhoneTwin;
@@ -111,4 +113,108 @@ bool FPhoneTwinPacketTest::RunTest(const FString&)
 	if (L.Num() == 1) TestEqual(TEXT("default ply path"), L[0].Ply, FString(TEXT("scans/a.ply")));
 	return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhoneTwinCalmTest, "PhoneTwin.CalmSound", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPhoneTwinCalmTest::RunTest(const FString&)
+{
+	// every AI label gets its own voice; unknown labels still get a pentatonic singing bowl
+	TestTrue(TEXT("cup voice"), CalmVoiceFor(TEXT("cup")).Idea.Contains(TEXT("싱잉볼")));
+	TestTrue(TEXT("keyboard rains"), CalmVoiceFor(TEXT("Keyboard")).Drops > 0);
+	TestTrue(TEXT("unknown label"), CalmVoiceFor(TEXT("zebra")).PadHz > 0);
+	TestNotEqual(TEXT("cup and book differ"), CalmVoiceFor(TEXT("cup")).BellHz, CalmVoiceFor(TEXT("book")).BellHz);
+
+	FCalmSynth S; S.Init(CalmVoiceFor(TEXT("tv")), 48000);
+	TArray<float> B; B.SetNumZeroed(4800);
+	S.Render(B.GetData(), B.Num());
+	TestTrue(TEXT("silent when far"), S.Peak() < 1e-4f);
+	S.SetNear(1); for (int32 i = 0; i < 20; i++) S.Render(B.GetData(), B.Num());   // 2 s: the pad has glided in
+	const float Pad = S.Peak();
+	TestTrue(TEXT("pad sounds when near"), Pad > .03f);
+	TestTrue(TEXT("pad stays soft"), Pad < .6f);
+	S.SetNear(0); for (int32 i = 0; i < 80; i++) S.Render(B.GetData(), B.Num());
+	TestTrue(TEXT("pad fades away"), S.Peak() < .01f);
+	S.Touch(1); S.Render(B.GetData(), B.Num());
+	TestTrue(TEXT("chime rings on touch"), S.Peak() > .03f);
+	bool bFinite = true; for (float X : B) bFinite &= FMath::IsFinite(X) && FMath::Abs(X) <= 1.f;
+	TestTrue(TEXT("no overload"), bFinite);
+	for (int32 i = 0; i < 120; i++) S.Render(B.GetData(), B.Num());
+	TestTrue(TEXT("chime decays"), S.Peak() < .01f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhoneTwinGlowTest, "PhoneTwin.Glow", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPhoneTwinGlowTest::RunTest(const FString&)
+{
+	FGlowParams P;   // brightest within 120 cm, dim beyond 450 cm
+	TestEqual(TEXT("bright at the audience"), GlowBrightness(P, 0), P.NearBrightness);
+	TestEqual(TEXT("dim far away"), GlowBrightness(P, 1000), P.FarBrightness);
+	const float Mid = GlowBrightness(P, 285);
+	TestTrue(TEXT("fades in between"), Mid > P.FarBrightness && Mid < P.NearBrightness);
+	P.Reveal = 0;
+	TestEqual(TEXT("idle brightness without audience"), GlowBrightness(P, 0), P.IdleBrightness);
+	P.Reveal = 1;
+
+	TArray<FLidarPointCloudPoint> Base, Out;
+	for (int32 i = 0; i < 2000; i++) Base.Emplace(FVector3f(i < 1000 ? 10.f : 900.f, (float)(i % 100), 50.f), FColor(200, 60, 40), true, (uint8)0);
+	BuildGlow(Base, P, FVector3f(0, 0, 0), 3.0, Out);
+	TestEqual(TEXT("every point kept"), Out.Num(), 2000);
+	int32 Moved = 0; double NearR = 0, FarR = 0;
+	for (int32 i = 0; i < Out.Num(); i++)
+	{
+		Moved += Out[i].Location != Base[i].Location ? 1 : 0;
+		(i < 1000 ? NearR : FarR) += Out[i].Color.R;
+	}
+	TestEqual(TEXT("points stay in place"), Moved, 0);
+	TestTrue(TEXT("near points brighter than far ones"), NearR > FarR * 2.5);
+	P.MaxPoints = 500; BuildGlow(Base, P, FVector3f(0, 0, 0), 3.0, Out);
+	TestTrue(TEXT("point budget"), Out.Num() <= 650);
+	return true;
+}
 #endif
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhoneTwinCollisionTest, "PhoneTwin.Collisions", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPhoneTwinCollisionTest::RunTest(const FString&)
+{
+	using namespace PhoneTwin;
+	TArray<FScanObject> O;
+	TestTrue(TEXT("parse"), ParseCollisions(TEXT("{\"voxel\":0.1,\"collisions\":[{\"id\":100,\"label\":\"chair\",\"name\":\"의자\",\"source\":\"ai\",\"cells\":[0,0,0,2,0,0],\"nearSound\":\"rain.wav\",\"touchSound\":\"/Game/Bell\",\"volume\":0.5,\"fullDistance\":0.3,\"maxDistance\":2,\"muted\":true},{\"id\":200,\"label\":\"x\",\"cells\":[]}]}"), O));
+	TestEqual(TEXT("empty shape dropped"), O.Num(), 1);
+	if (O.Num() == 1)
+	{
+		TestEqual(TEXT("cells"), O[0].Cells.Num(), 2);
+		TestTrue(TEXT("cell centre"), O[0].Cells[1].Equals(FVector3f(.25f, .05f, .05f), 1e-4f));
+		TestTrue(TEXT("centre between cells"), O[0].C.Equals(FVector3f(.15f, .05f, .05f), 1e-4f));
+		TestEqual(TEXT("sound"), O[0].NearSound, FString(TEXT("rain.wav")));
+		TestEqual(TEXT("touch"), O[0].TouchSound, FString(TEXT("/Game/Bell")));
+		TestEqual(TEXT("max"), O[0].MaxDistance, 2.f);
+		TestTrue(TEXT("muted, ai"), O[0].bMuted && O[0].bAi);
+	}
+	// 2 stereo frames at 48 kHz, with an unrelated chunk before the data
+	const uint8 W[] = { 'R','I','F','F',0,0,0,0,'W','A','V','E','f','m','t',' ',16,0,0,0, 1,0, 2,0, 0x80,0xBB,0,0, 0,0xEE,2,0, 4,0, 16,0,
+		'L','I','S','T',3,0,0,0, 1,2,3,0, 'd','a','t','a',8,0,0,0, 1,0, 2,0, 0xFF,0xFF, 4,0 };
+	TArray<int16> Pcm; int32 Rate = 0, Ch = 0; FString Err;
+	TArray<uint8> Bytes(W, UE_ARRAY_COUNT(W));
+	TestTrue(TEXT("wav"), ParseWav(Bytes, Pcm, Rate, Ch, Err));
+	TestEqual(TEXT("wav rate"), Rate, 48000); TestEqual(TEXT("wav channels"), Ch, 2);
+	TestEqual(TEXT("wav samples"), Pcm.Num(), 4);
+	if (Pcm.Num() == 4) TestEqual(TEXT("wav negative"), (int32)Pcm[2], -1);
+	// playback: 4 samples long, stereo; looping wraps around, a one-shot is silent until Restart and silent again after its end
+	const FString WavPath = FPaths::CreateTempFilename(*FPaths::ProjectIntermediateDir(), TEXT("pt"), TEXT(".wav"));
+	FFileHelper::SaveArrayToFile(Bytes, *WavPath);
+	TArray<uint8> Out; const int16* S;
+	UPhoneTwinFileWave* Loop = NewObject<UPhoneTwinFileWave>();
+	TestTrue(TEXT("load"), Loop->LoadFile(WavPath, true, Err));
+	Loop->OnGeneratePCMAudio(Out, 6); S = (const int16*)Out.GetData();
+	TestEqual(TEXT("loop wraps"), (int32)S[4], 1);
+	UPhoneTwinFileWave* Once = NewObject<UPhoneTwinFileWave>();
+	Once->LoadFile(WavPath, false, Err);
+	Once->OnGeneratePCMAudio(Out, 2); S = (const int16*)Out.GetData();
+	TestEqual(TEXT("silent before restart"), (int32)S[0], 0);
+	Once->Restart();
+	Once->OnGeneratePCMAudio(Out, 6); S = (const int16*)Out.GetData();
+	TestEqual(TEXT("plays after restart"), (int32)S[1], 2);
+	TestEqual(TEXT("silent at the end"), (int32)S[4], 0);
+	IFileManager::Get().Delete(*WavPath);
+	Bytes[34] = 24;
+	TestFalse(TEXT("24-bit refused"), ParseWav(Bytes, Pcm, Rate, Ch, Err));
+	return true;
+}

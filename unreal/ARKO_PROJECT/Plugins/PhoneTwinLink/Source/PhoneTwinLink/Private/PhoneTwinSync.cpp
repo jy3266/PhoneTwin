@@ -4,6 +4,7 @@
 #include "Interfaces/IHttpResponse.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformMisc.h"
+#include "HAL/PlatformProcess.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
@@ -140,10 +141,25 @@ void FPhoneTwinSync::Next()
 	});
 }
 
+void FPhoneTwinSync::RunScanTools()
+{
+	// new scans: back the originals up twice and make their first collision shapes (needs Node.js; the game runs fine without it)
+	const FString Tools = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("../PhoneTwin_v4/tools"));
+	for (const TCHAR* Script : { TEXT("archive_scans.mjs"), TEXT("make_collisions.mjs") })
+	{
+		const FString Path = Tools / Script;
+		if (!FPaths::FileExists(Path)) continue;
+		FProcHandle P = FPlatformProcess::CreateProc(TEXT("node"), *FString::Printf(TEXT("\"%s\""), *Path), true, true, true, nullptr, 0, *Tools, nullptr);
+		if (P.IsValid()) FPlatformProcess::CloseProc(P);
+		else UE_LOG(LogPhoneTwinSync, Warning, TEXT("node %s를 실행하지 못했습니다"), Script);
+	}
+}
+
 void FPhoneTwinSync::Finish(bool bOk, const FString& Message)
 {
 	const bool bNew = Downloaded > 0;
 	bRunning = false; Status = Message;
 	UE_LOG(LogPhoneTwinSync, Log, TEXT("%s"), *Message);
+	if (bNew) RunScanTools();
 	OnSynced.Broadcast(bNew, Status);
 }

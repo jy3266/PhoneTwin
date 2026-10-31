@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+import { shapeDistance } from './collision_core.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), labelsEl = $('labels'), listEl = $('list');
@@ -24,6 +25,7 @@ const marks = new THREE.Group();  // A/B, objects, AI rings
 scene.add(marks);
 let labels = [];                  // {pos: Vector3, el}
 let currentMeta = null;          // meta of the shown scan (a/b used to place the ESP32)
+let currentShapes = null;        // <id>.collision.json: real shapes, made and edited in editor.html
 let bounds = new THREE.Box3(new THREE.Vector3(-2, 0, -2), new THREE.Vector3(2, 2.5, 2));
 
 function resize() {
@@ -91,6 +93,7 @@ function addMarks(meta) {
     const g = new THREE.BufferGeometry().setFromPoints([v3(meta.a).setY(meta.a[1] + 0.01), v3(meta.b).setY(meta.b[1] + 0.01)]);
     marks.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffffff })));
   }
+  if (currentShapes) { addShapes(currentShapes); return; }
   for (const o of meta.objects || []) {
     const p = v3(o.c), r = o.r || 0.25;
     const m = new THREE.Mesh(new THREE.SphereGeometry(r, 24, 16),
@@ -106,9 +109,27 @@ function addMarks(meta) {
   }
 }
 
+const cube = new THREE.BoxGeometry(1, 1, 1);
+function shapeBox(c, v) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < c.cells.length; i++) { const a = i % 3; lo[a] = Math.min(lo[a], c.cells[i]); hi[a] = Math.max(hi[a], c.cells[i] + 1); }
+  return { centre: new THREE.Vector3((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2).multiplyScalar(v), top: hi[1] * v };
+}
+function addShapes(file) {
+  const v = file.voxel, m = new THREE.Matrix4();
+  for (const c of file.collisions) {
+    if (!c.cells.length) continue;
+    const n = c.cells.length / 3, mesh = new THREE.InstancedMesh(cube, new THREE.MeshBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.28, depthWrite: false }), n);
+    for (let i = 0; i < n; i++) { m.makeScale(v, v, v).setPosition((c.cells[i * 3] + 0.5) * v, (c.cells[i * 3 + 1] + 0.5) * v, (c.cells[i * 3 + 2] + 0.5) * v); mesh.setMatrixAt(i, m); }
+    mesh.computeBoundingSphere(); marks.add(mesh);
+    const b = shapeBox(c, v);
+    label(`${c.name}${c.nearSound || c.touchSound ? ' ♪' : ''}`, b.centre.clone().setY(b.top + 0.04));
+  }
+}
+
 // ---------------------------------------------------------------- loading
 const loader = new PLYLoader();
-function showCloud(buffer, meta, name) {
+function showCloud(buffer, meta, name, shapes = null) {
   const geom = loader.parse(buffer);
   if (!geom.getAttribute('position') || geom.getAttribute('position').count === 0) throw new Error('점이 없는 PLY입니다');
   if (!geom.getAttribute('color')) {
@@ -122,14 +143,14 @@ function showCloud(buffer, meta, name) {
   cloud = new THREE.Points(geom, pointMat); scene.add(cloud);
   geom.computeBoundingBox(); bounds = geom.boundingBox.clone();
   grid.position.set(bounds.getCenter(tmp).x, meta?.a ? meta.a[1] : bounds.min.y, bounds.getCenter(tmp).z);
-  addMarks(meta); currentMeta = meta || null;
+  currentShapes = shapes; addMarks(meta); currentMeta = meta || null;
   trailN = 0; trail.geometry.setDrawRange(0, 0); audience.pos = null;
   setView('iso');
   $('title').textContent = name;
   const s = bounds.getSize(new THREE.Vector3());
   const n = geom.getAttribute('position').count;
   $('info').textContent = `${n.toLocaleString('ko-KR')}점 · 크기 ${s.x.toFixed(2)} × ${s.z.toFixed(2)} × ${s.y.toFixed(2)}(높이) m`
-    + (meta ? `\nA·B ${meta.a && meta.b ? '있음' : '없음'} · 사물 ${(meta.objects || []).length} · AI 사물 ${(meta.ai || []).length}` : '');
+    + (meta ? `\nA·B ${meta.a && meta.b ? '있음' : '없음'} · ${shapes ? `콜리전 ${shapes.collisions.length}` : `사물 ${(meta.objects || []).length} · AI 사물 ${(meta.ai || []).length}`}` : '');
   $('empty').hidden = true;
 }
 
@@ -143,11 +164,12 @@ async function openScan(entry, li) {
   listEl.querySelectorAll('li').forEach((x) => x.classList.remove('on')); li?.classList.add('on');
   $('side').classList.remove('open');
   await busy(async () => {
-    const [ply, meta] = await Promise.all([
+    const [ply, meta, shapes] = await Promise.all([
       fetch(entry.ply).then((r) => { if (!r.ok) throw new Error(`${entry.ply} ${r.status}`); return r.arrayBuffer(); }),
       entry.meta ? fetch(entry.meta).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null,
+      fetch(`web_scans/${entry.id}.collision.json`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]);
-    showCloud(ply, meta, entry.id);
+    showCloud(ply, meta, entry.id, shapes);
     const dl = $('download'); dl.href = entry.ply; dl.download = `${entry.id}.ply`; dl.hidden = false;
     history.replaceState(null, '', `#${encodeURIComponent(entry.id)}`);
   });
@@ -161,7 +183,7 @@ function fmtDate(s) {
 async function loadIndex() {
   let scans = [];
   try {
-    const r = await fetch(`scans/index.json?t=${Date.now()}`, { cache: 'no-store' });
+    const r = await fetch(`web_scans/index.json?t=${Date.now()}`, { cache: 'no-store' });   // clones; scans/ stays the untouched original
     if (r.ok) scans = (await r.json()).scans || [];
   } catch (e) { console.warn('index.json', e); }
   listEl.innerHTML = '';
@@ -235,6 +257,10 @@ let trailN = 0, distLabels = [], lastList = 0;
 
 function floorY() { return currentMeta && Array.isArray(currentMeta.a) ? currentMeta.a[1] : bounds.min.y; }
 function sceneObjects() {
+  if (currentShapes) {
+    const v = currentShapes.voxel;
+    return currentShapes.collisions.filter((c) => c.cells.length).map((c) => ({ name: c.name, c: shapeBox(c, v).centre, cells: c.cells, voxel: v }));
+  }
   const m = currentMeta || {};
   return [...(m.objects || []).map((o) => ({ name: o.name || `사물 ${o.id}`, c: v3(o.c), r: o.r || 0.25 })),
     ...(m.ai || []).map((it) => ({ name: it.name || it.label, c: v3(it.c), r: it.r || 0.4 }))];
@@ -274,7 +300,7 @@ function updateAudience() {
   const w = stage.clientWidth, h = stage.clientHeight, rows = [];
   while (distLabels.length < objs.length) { const el = document.createElement('div'); el.className = 'dist-label'; labelsEl.appendChild(el); distLabels.push(el); }
   objs.forEach((o, i) => {
-    const d = Math.max(0, Math.hypot(o.c.x - p.x, o.c.z - p.z) - o.r);
+    const d = o.cells ? shapeDistance(o.cells, o.voxel, p.x, 0, p.z, true) : Math.max(0, Math.hypot(o.c.x - p.x, o.c.z - p.z) - o.r);
     const prox = Math.max(0, 1 - d / 2);   // 1 at the object, 0 from 2 m
     pos.set([p.x, fy + 0.02, p.z, o.c.x, fy + 0.02, o.c.z], i * 6);
     c.setRGB(1, 0.85 - 0.6 * prox, 0.25 - 0.15 * prox).toArray(col, i * 6); c.toArray(col, i * 6 + 3);

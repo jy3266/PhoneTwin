@@ -1,3 +1,4 @@
 *.ply binary
 *.apk binary
 android/gradlew text eol=lf
+web_scans/** -text

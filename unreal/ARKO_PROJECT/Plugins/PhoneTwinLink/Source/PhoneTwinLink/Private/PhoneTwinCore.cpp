@@ -189,6 +189,72 @@ bool ParseMeta(const FString& Json, FScanMeta& Out)
 	return true;
 }
 
+bool ParseCollisions(const FString& Json, TArray<FScanObject>& Out)
+{
+	Out.Reset();
+	TSharedPtr<FJsonObject> O;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), O) || !O.IsValid()) return false;
+	double Voxel = .04; O->TryGetNumberField(TEXT("voxel"), Voxel);
+	const TArray<TSharedPtr<FJsonValue>>* Arr;
+	if (!O->TryGetArrayField(TEXT("collisions"), Arr)) return false;
+	for (const TSharedPtr<FJsonValue>& V : *Arr)
+	{
+		const TSharedPtr<FJsonObject>* E; if (!V->TryGetObject(E)) continue;
+		const TArray<TSharedPtr<FJsonValue>>* Flat;
+		if (!(*E)->TryGetArrayField(TEXT("cells"), Flat) || Flat->Num() < 3) continue;
+		FScanObject S; S.Voxel = Voxel;
+		double Id = 0, Num; (*E)->TryGetNumberField(TEXT("id"), Id); S.Id = (int32)Id;
+		(*E)->TryGetStringField(TEXT("label"), S.Label);
+		if (!(*E)->TryGetStringField(TEXT("name"), S.Name)) S.Name = S.Label;
+		FString Source; (*E)->TryGetStringField(TEXT("source"), Source); S.bAi = Source == TEXT("ai");
+		(*E)->TryGetStringField(TEXT("nearSound"), S.NearSound); (*E)->TryGetStringField(TEXT("touchSound"), S.TouchSound);
+		if ((*E)->TryGetNumberField(TEXT("volume"), Num)) S.Volume = Num;
+		if ((*E)->TryGetNumberField(TEXT("fullDistance"), Num)) S.FullDistance = Num;
+		if ((*E)->TryGetNumberField(TEXT("maxDistance"), Num)) S.MaxDistance = Num;
+		(*E)->TryGetBoolField(TEXT("muted"), S.bMuted);
+		S.Cells.Reserve(Flat->Num() / 3);
+		FBox3f Box(ForceInit);
+		for (int32 i = 0; i + 2 < Flat->Num(); i += 3)
+		{
+			const FVector3f C(((*Flat)[i]->AsNumber() + .5) * Voxel, ((*Flat)[i + 1]->AsNumber() + .5) * Voxel, ((*Flat)[i + 2]->AsNumber() + .5) * Voxel);
+			S.Cells.Add(C); Box += C;
+		}
+		// centre + radius stay for what only needs a rough place: labels, OSC, TouchDesigner's map
+		S.C = Box.GetCenter(); S.R = FMath::Max(Box.GetExtent().X, Box.GetExtent().Z) + Voxel * .5f;
+		Out.Add(MoveTemp(S));
+	}
+	return true;
+}
+
+bool ParseWav(const TArray<uint8>& B, TArray<int16>& OutPcm, int32& OutRate, int32& OutChannels, FString& OutError)
+{
+	const auto U16 = [&B](int32 At) { return (int32)B[At] | ((int32)B[At + 1] << 8); };
+	const auto U32 = [&B](int32 At) { return (uint32)B[At] | ((uint32)B[At + 1] << 8) | ((uint32)B[At + 2] << 16) | ((uint32)B[At + 3] << 24); };
+	const auto Tag = [&B](int32 At, const char* T) { return FMemory::Memcmp(B.GetData() + At, T, 4) == 0; };
+	if (B.Num() < 44 || !Tag(0, "RIFF") || !Tag(8, "WAVE")) { OutError = TEXT("WAV가 아닙니다"); return false; }
+	int32 Bits = 0, Format = 0; OutChannels = 0;
+	for (int64 At = 12; At + 8 <= B.Num();)
+	{
+		const int64 Size = U32((int32)At + 4), Body = At + 8;
+		if (Tag((int32)At, "fmt ") && Body + 16 <= B.Num())
+		{
+			Format = U16((int32)Body); OutChannels = U16((int32)Body + 2); OutRate = (int32)U32((int32)Body + 4); Bits = U16((int32)Body + 14);
+		}
+		else if (Tag((int32)At, "data"))
+		{
+			if ((Format != 1 && Format != 0xFFFE) || Bits != 16 || OutChannels < 1 || OutChannels > 2 || OutRate <= 0) { OutError = TEXT("16-bit PCM 1·2채널만 읽을 수 있습니다"); return false; }
+			const int64 Bytes = FMath::Min(Size, (int64)B.Num() - Body) & ~1ll;
+			OutPcm.SetNumUninitialized((int32)(Bytes / 2));
+			FMemory::Memcpy(OutPcm.GetData(), B.GetData() + Body, Bytes);   // Windows is little-endian
+			if (OutPcm.Num() < OutChannels) { OutError = TEXT("빈 WAV"); return false; }
+			return true;
+		}
+		At = Body + Size + (Size & 1);
+	}
+	OutError = TEXT("WAV에 data가 없습니다");
+	return false;
+}
+
 bool ParseIndex(const FString& Json, TArray<FScanEntry>& Out)
 {
 	Out.Reset();

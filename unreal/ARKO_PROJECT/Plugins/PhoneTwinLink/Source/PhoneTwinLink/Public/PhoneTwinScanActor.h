@@ -12,6 +12,9 @@
 #include "PhoneTwinScanActor.generated.h"
 
 class ULidarPointCloudComponent;
+class ULidarPointCloud;
+class UPhoneTwinCalmWave;
+class UPhoneTwinFileWave;
 class UCameraComponent;
 class UAudioComponent;
 class USoundBase;
@@ -64,6 +67,55 @@ public:
 	/** Round points instead of squares. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Scan")
 	bool bRoundPoints = true;
+
+	// ---------------------------------------------------------------- light (points brighten as the audience comes closer)
+	/** The point cloud glows brighter around the audience and stays dim far away. Off = the plain scan colours. Key K. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light")
+	bool bLightUp = true;
+
+	/** Full brightness within this floor distance (cm) of the audience. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0"))
+	float LitRadius = 120.f;
+
+	/** Dim beyond this distance (cm); in between it fades. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "1"))
+	float FadeRadius = 450.f;
+
+	/** Brightness (0..1) near the audience, far away, and everywhere while nobody is tracked. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0", ClampMax = "1"))
+	float NearBrightness = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0", ClampMax = "1"))
+	float FarBrightness = .18f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0", ClampMax = "1"))
+	float IdleBrightness = .35f;
+
+	/** Near points also turn towards white light (0 = keep the scan colour). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0", ClampMax = "1"))
+	float NearWhite = .35f;
+
+	/** Dim points shimmer softly like faint lights (0 = steady). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0", ClampMax = "1"))
+	float Twinkle = .2f;
+
+	/** Emissive strength of the points: above 1 the bright points bloom (glow) on the dark background. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0.1", ClampMax = "20"))
+	float LightGain = 2.5f;
+
+	/** Glow around bright points (camera post process). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0", ClampMax = "8"))
+	float BloomIntensity = 1.2f;
+
+	/** Brightness updates per second (each one rebuilds the cloud on a worker thread). */
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|Light", meta = (ClampMin = "2", ClampMax = "30"))
+	float LightRateHz = 12.f;
+
+	/** Most points drawn while Light Up is on (larger scans are thinned evenly). */
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|Light", meta = (ClampMin = "10000"))
+	int32 LightMaxPoints = 500000;
+
+	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SetLightUp(bool bOn);
 
 	// ---------------------------------------------------------------- input switch
 	/** Which device moves the hand in the scan: the phone (ARCore) or the ESP32 (UWB position + IMU rotation). Keys 1 / 2. */
@@ -139,7 +191,7 @@ public:
 	float FloorMargin = 10.f;
 
 	// ---------------------------------------------------------------- sound
-	/** Sound per object: key = AI label ("chair", "potted plant"…) or the placed object's name ("사물 1"). Looping sounds work best. */
+	/** Sound per object when the collision editor names none: key = AI label ("chair", "potted plant"…) or the placed object's name ("사물 1"). Looping sounds work best. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound")
 	TMap<FString, TObjectPtr<USoundBase>> ObjectSounds;
 
@@ -147,11 +199,27 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound")
 	TObjectPtr<USoundBase> DefaultObjectSound;
 
-	/** When an object has no sound at all, play a built-in beep (pitch differs per kind of object). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound")
+	/** Built-in calm sounds made from each recognised object (cup = singing bowl, keyboard = soft rain …): a pad while coming closer, a chime on touch.
+	 *  Used wherever ObjectSounds / TouchSounds give nothing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound", meta = (DisplayName = "Builtin Calm Sounds"))
 	bool bBuiltinBeep = true;
 
-	/** Object sounds start at this distance (cm) and reach full volume at SoundFullDistance. */
+	/** Sound played once when the audience touches an object: key = AI label or object name. Empty = the built-in chime. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound")
+	TMap<FString, TObjectPtr<USoundBase>> TouchSounds;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound")
+	TObjectPtr<USoundBase> DefaultTouchSound;
+
+	/** Touch = the hand touches the object (ContactDistance) or the audience stands within this floor distance (cm) of it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound", meta = (ClampMin = "0"))
+	float TouchDistance = 35.f;
+
+	/** While the touch lasts, ring again softly every this many seconds. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound", meta = (ClampMin = "0.5"))
+	float TouchRepeatSeconds = 4.f;
+
+	/** Object sounds start at this distance (cm) and reach full volume at SoundFullDistance. A collision's own values from the editor win. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound")
 	float SoundRange = 400.f;
 
@@ -159,7 +227,7 @@ public:
 	float SoundFullDistance = 50.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound", meta = (ClampMin = "1"))
-	int32 MaxSimultaneousSounds = 3;
+	int32 MaxSimultaneousSounds = 6;
 
 	/** Optional looping sound for "close to any surface": volume follows the vibration strength. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound")
@@ -210,9 +278,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|View")
 	bool bDrawDebug = true;
 
-	/** Hide the level's static meshes so only the scan is visible (key H). Collision stays. */
+	/** Draw every collision shape, not only the one being approached (key B). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|View")
-	bool bHideLevelGeometry = false;
+	bool bShowCollisions = false;
+
+	/** Play shows only the point cloud: every other actor of the level (meshes, sky, fog, lights, characters) is hidden and
+	 *  the background is dark (key H). Collision stays. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|View", meta = (DisplayName = "Point Cloud Only (hide level)"))
+	bool bHideLevelGeometry = true;
 
 	// ---------------------------------------------------------------- live readouts
 	UPROPERTY(BlueprintReadOnly, Category = "Phone Twin|State") bool bTracking = false;
@@ -258,11 +331,38 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Phone Twin") TObjectPtr<USceneComponent> Tracker;
 	UPROPERTY(VisibleAnywhere, Category = "Phone Twin") TObjectPtr<UCameraComponent> TrackerCamera;
 	UPROPERTY(VisibleAnywhere, Category = "Phone Twin") TObjectPtr<UCameraComponent> OverviewCamera;
-	UPROPERTY() TObjectPtr<UAudioComponent> SurfaceAudio;
 	UPROPERTY() TArray<TObjectPtr<UAudioComponent>> ObjectAudio;
+	UPROPERTY() TObjectPtr<ULidarPointCloud> StaticCloud;
+	UPROPERTY() TArray<TObjectPtr<ULidarPointCloud>> LightBuffers;
+	UPROPERTY() TArray<TObjectPtr<USoundBase>> UserSounds;
 
 private:
-	struct FObjectUE { int32 Id; FString Label, Name; FVector C; double R; bool bAi; };
+	struct FObjectUE
+	{
+		int32 Id = 0; FString Label, Name; FVector C = FVector::ZeroVector; double R = 0; bool bAi = false;
+		TArray<FVector> Cells; double CellR = 0;              // real shape; no cells = sphere C, R
+		float Volume = 1, FullCm = -1, MaxCm = -1; bool bMuted = false;
+		double FloorD = 1e12, HandD = 1e12; FVector HandNear = FVector::ZeroVector;   // refreshed every frame
+	};
+	/** Sounds of one object (or of the scan surface): an approach layer and a touch layer. Pointers are kept alive by ObjectAudio / the sound maps. */
+	struct FObjSound
+	{
+		UAudioComponent* Near = nullptr;        // user's looping sound (ObjectSounds) or the calm wave
+		UAudioComponent* Calm = nullptr;        // calm wave (pad + chime); == Near when no user sound
+		UPhoneTwinCalmWave* Wave = nullptr;
+		USoundBase* TouchAsset = nullptr;       // TouchSounds / DefaultTouchSound / /Game asset from the editor
+		UAudioComponent* TouchComp = nullptr;   // the editor's touch WAV
+		UPhoneTwinFileWave* TouchWave = nullptr;
+		float Volume = 1;
+		FString Idea;
+		bool bTouching = false; double LastStrike = -1e9, LastLoud = -1e9; float Gain = 0;
+	};
+	FObjSound MakeObjSound(const FString& Label, const FString& Name, const FVector& Where, USoundBase* NearAsset, const FString& TouchRef = FString());
+	USoundBase* LoadUserSound(const FString& Ref, bool bLoop);
+	void RebuildObjects();
+	void MeasureObjects();
+	void TickCollisionFile(float DeltaSeconds);
+	void DriveSound(FObjSound& S, float NearGain, bool bTouchNow, bool bReleased, int32 Index);
 	struct FLink { double LastTime = -1e9; FString Address; uint32 Seq = 0; int64 Packets = 0; };
 
 	void OpenSocket();
@@ -285,6 +385,8 @@ private:
 	void ApplyScan(const FString& Id, TSharedPtr<FPhoneTwinLoaded> Data);
 	void OnSynced(bool bNewFiles, const FString& Status);
 	void ShowMouse(bool bShow);
+	void HideOthers();
+	void ApplyLook();
 
 	FSocket* Socket = nullptr;
 	FLink Phone, Esp; double EspAckTime = -1e9;
@@ -296,13 +398,22 @@ private:
 
 	PhoneTwin::FScanFrame Frame; PhoneTwin::FPointGrid Grid; double FloorZ = 0; int32 PointCount = 0;
 	TArray<FObjectUE> Objects;
+	PhoneTwin::FScanMeta LoadedMeta; FDateTime CollisionStamp; double CollisionTimer = 0; FString CollisionStatus; bool bTrace = false;
 	FVector NearestPoint = FVector::ZeroVector; bool bHasNearest = false;
 	FVector TrackerPos = FVector::ZeroVector; FRotator TrackerRot = FRotator::ZeroRotator; FVector Probe = FVector::ZeroVector;
 	bool bLoading = false, bMouse = false;
 	FString ScanStatus = TEXT("스캔 없음"), PhoneScanId;
 	FDelegateHandle SyncHandle;
 	TSharedPtr<SWidget> Hud;
-	TArray<TWeakObjectPtr<AActor>> HiddenActors;
+	TArray<TWeakObjectPtr<AActor>> HiddenActors, DisabledVolumes; double HideTimer = 0;
+
+	TArray<FObjSound> Sounds; FObjSound SurfaceSnd; FString SoundNow;
+	void TickLight(float DeltaSeconds);
+	void OnLightBuilt(int32 Buffer, uint32 Gen, float Ms, int32 Num);
+	TSharedPtr<const TArray<FLidarPointCloudPoint>> LightBase;
+	TSharedRef<FThreadSafeBool> LightWorking = MakeShared<FThreadSafeBool>(false);
+	bool bLightPending = false; int32 LightNext = 0; uint32 LightGen = 0; double LightTimer = 0;
+	float Reveal = 0, LightMs = 0; FVector RevealCenter = FVector::ZeroVector; double LightLogTime = 0;
 
 	TSharedPtr<IWebSocket> Relay;
 	FString RelayStatus, RelayPeers;

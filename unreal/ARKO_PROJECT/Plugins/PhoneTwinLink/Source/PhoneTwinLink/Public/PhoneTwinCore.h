@@ -15,6 +15,12 @@ namespace PhoneTwin
 		FVector3f C = FVector3f::ZeroVector;   // centre, S frame (metres, Y up)
 		float R = 0.25f;        // radius, metres
 		bool bAi = false;
+		// from <id>.json in PhoneTwinScans/collisions (made and edited in editor.html); empty Cells = plain sphere from the scan's meta
+		TArray<FVector3f> Cells; // centres of the shape's cubes, S frame
+		float Voxel = 0;        // cube side, metres
+		FString NearSound, TouchSound;   // WAV in PhoneTwinScans/sounds or /Game/... asset; empty = built-in calm sound
+		float Volume = 1, FullDistance = -1, MaxDistance = -1;   // metres; negative = the actor's SoundFullDistance / SoundRange
+		bool bMuted = false;
 	};
 
 	struct FScanMeta
@@ -33,6 +39,10 @@ namespace PhoneTwin
 	PHONETWINLINK_API bool SavePly(const FString& Path, const TArray<FVector3f>& S, const TArray<FColor>& Color);
 	PHONETWINLINK_API bool ParseMeta(const FString& Json, FScanMeta& Out);
 	PHONETWINLINK_API bool ParseIndex(const FString& Json, TArray<FScanEntry>& Out);
+	/** Collision file (PROTOCOL.md §5). Shapes without cells are dropped. */
+	PHONETWINLINK_API bool ParseCollisions(const FString& Json, TArray<FScanObject>& Out);
+	/** 16-bit PCM WAV: interleaved samples, sample rate and channel count (1 or 2). */
+	PHONETWINLINK_API bool ParseWav(const TArray<uint8>& Bytes, TArray<int16>& OutPcm, int32& OutRate, int32& OutChannels, FString& OutError);
 
 	/**
 	 * S frame (phone scan: metres, Y up, right-handed) -> Unreal (cm, Z up, left-handed): (x, z, y) * 100.

@@ -127,6 +127,7 @@ wss://<앱 주소>/ws?room=<방 이름>&role=<phone|esp32|unreal|viewer>&key=<RE
 | `/phonetwin/dir` | `fx fy fz`(f) `yaw`(f, 도) |
 | `/phonetwin/nearest` | `objectId`(i, 0 = 스캔 표면, -1 = 없음) `distCm`(f, -1 = 범위 밖) `intensity`(f, 0~1) `contact`(i) `name`(s) — 진동 기준 |
 | `/phonetwin/object` | `index id`(i) `name label`(s) `floorCm handCm`(f) `cx cy cz`(f, m) `radiusCm`(f) — 사물마다 한 개 |
+| `/phonetwin/touch` | `index id`(i) `name`(s) `strength`(f 0~1) — 관객이 사물에 닿은 순간 한 번(계속 닿아 있으면 4초마다 0.55). index −1 = 스캔 표면. 바닥 거리 ≤ TouchDistance(35cm) 또는 손 접촉 |
 
 `floorCm` = 바닥에서 잰 관객 ↔ 사물 표면 거리(소리와 같은 기준), `handCm` = 손(장치) ↔ 사물 표면 3D 거리.
 `active=0`이면 `pos`·`object`는 보내지 않습니다.
@@ -142,5 +143,37 @@ TouchDesigner(`Phone_Twin_Project.toe`)가 이것을 받아 움직임 신호로 
 | `/td/nearest` | `index id proximity floorCm name` |
 | `/td/object/<index>` | `proximity`(0~1) `floorCm` `approach`(cm/s, 다가오면 +) `id name` |
 | `/td/proximity` | 모든 사물의 proximity (index 순서) |
+| `/td/touch` | `/phonetwin/touch`를 그대로 전달 (닿은 순간) |
 
 `proximity = 1 - floorCm / 근접 범위`(TouchDesigner 설정, 기본 200 cm), 0~1로 자름. 시험: `py tools/osc_test.py both`.
+
+## 5. 콜리전·소리 파일
+
+원본(`scans/`)과 따로 저장합니다. 편집기(`editor.html`)가 만들고, 언리얼과 웹이 같은 내용을 읽습니다.
+
+| 위치 | 용도 |
+|---|---|
+| `ARKO_PROJECT/PhoneTwinScans/collisions/<id>.json` | 기준 파일. 언리얼이 1초마다 바뀌었는지 확인해 실행 중에도 다시 읽음 |
+| `ARKO_PROJECT/PhoneTwinScans/collisions/history/` | 저장할 때마다 남는 이전 판 |
+| `ARKO_PROJECT/PhoneTwinScans/sounds/*.wav` | 편집기가 넣은 소리 (48 kHz 16-bit PCM, 1·2채널) |
+| `web_scans/<id>.collision.json` | 같은 내용의 사본, 웹 뷰어용 |
+
+```json
+{ "version": 1, "scan": "<id>", "voxel": 0.04,
+  "collisions": [ { "id": 100, "label": "chair", "name": "의자", "source": "ai|placed|user", "fallback": false,
+    "cells": [i, j, k, i, j, k],
+    "nearSound": "rain.wav", "touchSound": "/Game/Sounds/Bell",
+    "volume": 1, "fullDistance": 0.5, "maxDistance": 4, "muted": false } ] }
+```
+
+- `cells`: 모양을 이루는 정육면체. 칸 `(i,j,k)`의 범위는 S 좌표에서 `[i, i+1] × voxel`(m).
+- `nearSound`/`touchSound`: `sounds/`의 WAV 파일 이름 또는 `/Game/`으로 시작하는 언리얼 에셋. 비어 있으면 사물별 내장 소리.
+- `fallback`: 자동 구분이 불확실해 사람이 손봐야 하는 모양.
+- 거리: 관객 위치에서 모양 표면까지 바닥 평면으로 잰 값 `d`(m). 손 거리(진동)는 3차원으로 잼.
+- 음량: `G = 1 (d ≤ fullDistance)`, 그 밖에는 `clamp((maxDistance − d) / (maxDistance − fullDistance), 0, 1)`, 최종 `G² × volume`. 웹 `distanceGain()`과 언리얼 `UpdateSounds()`가 같은 식이며, 언리얼은 관객이 등진 소리에 0.3배까지 줄이는 값을 더 곱합니다.
+
+언리얼은 파일이 없으면 스캔 meta의 구 모양으로 동작합니다.
+
+## 6. 스캔 원본 보관
+
+`tools/archive_scans.mjs`가 git 기록의 모든 버전과 로컬에만 있는 파일을 `PhoneTwin/ScanArchive`와 `D:/PhoneTwin_ScanArchive`에 보관합니다. 파일은 추가만 하고 읽기 전용이며 `manifest.json`에 SHA-256을 기록합니다. 편집기를 켤 때, 언리얼이 새 스캔을 받았을 때 자동 실행되며 `--verify`로 검사합니다. 웹은 `web_scans/`의 복제본만 읽습니다(`tools/make_web_copies.mjs`, GitHub Actions `Web scan copies`).
