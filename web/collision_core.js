@@ -9,7 +9,7 @@ export const SOUND_DEFAULTS = { nearSound: '', touchSound: '', volume: 1, fullDi
 const REACH = { bed: 1.4, couch: 1.3, sofa: 1.3, 'dining table': 1.2, table: 1.2, desk: 1.1, chair: 0.65, bench: 1, person: 0.6, refrigerator: 0.7,
   tv: 0.6, laptop: 0.3, keyboard: 0.3, backpack: 0.35, suitcase: 0.45, 'potted plant': 0.5, book: 0.2, mouse: 0.1, cup: 0.1, bottle: 0.14, remote: 0.13, 'cell phone': 0.1 };
 
-const KEY = 1 << 20;   // cells stay well inside ±2^19 for any room
+const KEY = 1 << 16;   // ±32768 cells is over a kilometre; KEY^3 stays below 2^53, where every whole number is still exact
 export const cellKey = (i, j, k) => (i + KEY / 2) * KEY * KEY + (j + KEY / 2) * KEY + (k + KEY / 2);
 export const keyCell = (n) => { const k = n % KEY, r = (n - k) / KEY, j = r % KEY; return [(r - j) / KEY - KEY / 2, j - KEY / 2, k - KEY / 2]; };
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -127,6 +127,40 @@ export function ballShape(c, r, voxel = VOXEL) {
 export function boxShape(c, size, voxel = VOXEL) {
   const out = [], lo = c.map((v, a) => Math.floor((v - size[a] / 2) / voxel)), hi = c.map((v, a) => Math.floor((v + size[a] / 2) / voxel));
   for (let i = lo[0]; i <= hi[0]; i++) for (let j = lo[1]; j <= hi[1]; j++) for (let k = lo[2]; k <= hi[2]; k++) out.push([i, j, k]);
+  return out;
+}
+
+/** Rigid move by whole cells: nothing is resampled, so the shape cannot change. */
+export function shiftCells(flat, d) { return flat.map((v, i) => v + d[i % 3]); }
+
+const rotate = ([x, y, z], [qx, qy, qz, qw]) => {
+  const tx = 2 * (qy * z - qz * y), ty = 2 * (qz * x - qx * z), tz = 2 * (qx * y - qy * x);
+  return [x + qw * tx + qy * tz - qz * ty, y + qw * ty + qz * tx - qx * tz, z + qw * tz + qx * ty - qy * tx];
+};
+
+/**
+ * Rotates and scales a shape around `from`, then puts that point at `to`: p' = to + R(S(p - from)).
+ * Works backwards from every target cell, so turning or enlarging leaves no holes. A few samples per cell keep one-cell-thin shells closed.
+ */
+export function transformCells(flat, voxel, from, to, scale, quat) {
+  const have = new Set(), lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i + 2 < flat.length; i += 3) have.add(cellKey(flat[i], flat[i + 1], flat[i + 2]));
+  const sMin = [0, 1, 2].map((a) => Math.max(0.05, scale[a])), inverse = [-quat[0], -quat[1], -quat[2], quat[3]];
+  const srcLo = [0, 1, 2].map((a) => { let m = Infinity; for (let i = a; i < flat.length; i += 3) m = Math.min(m, flat[i]); return m * voxel; });
+  const srcHi = [0, 1, 2].map((a) => { let m = -Infinity; for (let i = a; i < flat.length; i += 3) m = Math.max(m, flat[i] + 1); return m * voxel; });
+  for (let c = 0; c < 8; c++) {
+    const corner = [0, 1, 2].map((a) => ((c >> a) & 1 ? srcHi[a] : srcLo[a]) - from[a]);
+    const p = rotate(corner.map((v, a) => v * sMin[a]), quat);
+    for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], p[a] + to[a]); hi[a] = Math.max(hi[a], p[a] + to[a]); }
+  }
+  const SAMPLES = [[0, 0, 0], [0.3, 0, 0], [-0.3, 0, 0], [0, 0.3, 0], [0, -0.3, 0], [0, 0, 0.3], [0, 0, -0.3]], out = [];
+  const a0 = lo.map((v) => Math.floor(v / voxel) - 1), a1 = hi.map((v) => Math.floor(v / voxel) + 1);
+  for (let i = a0[0]; i <= a1[0]; i++) for (let j = a0[1]; j <= a1[1]; j++) for (let k = a0[2]; k <= a1[2]; k++) {
+    for (const s of SAMPLES) {
+      const p = rotate([(i + 0.5 + s[0]) * voxel - to[0], (j + 0.5 + s[1]) * voxel - to[1], (k + 0.5 + s[2]) * voxel - to[2]], inverse);
+      if (have.has(cellKey(Math.floor((p[0] / sMin[0] + from[0]) / voxel), Math.floor((p[1] / sMin[1] + from[1]) / voxel), Math.floor((p[2] / sMin[2] + from[2]) / voxel)))) { out.push(i, j, k); break; }
+    }
+  }
   return out;
 }
 

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
-import { SOUND_DEFAULTS, ballShape, boxShape, cellKey, distanceGain, flatten, growShape, keyCell, occupancy, reachOf, shapeDistance, unflatten } from './collision_core.js';
+import { SOUND_DEFAULTS, ballShape, boxShape, cellKey, distanceGain, flatten, growShape, occupancy, reachOf, shapeDistance, shiftCells, transformCells, unflatten } from './collision_core.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
@@ -112,10 +112,10 @@ function cellBox(c) {
   return b;
 }
 function placeGizmo() {
-  const on = selected && (tool === 'move' || tool === 'scale');
+  const mode = { move: 'translate', rotate: 'rotate', scale: 'scale' }[tool], on = selected && mode;
   gizmo.visible = gizmo.enabled = !!on;
   if (!on) return;
-  gizmo.setMode(tool === 'move' ? 'translate' : 'scale');
+  gizmo.setMode(mode);
   cellBox(selected).getCenter(gizmoTarget.position); gizmoTarget.scale.set(1, 1, 1); gizmoTarget.rotation.set(0, 0, 0);
 }
 function setTool(t) {
@@ -126,19 +126,24 @@ function setTool(t) {
 }
 document.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
-// moving / scaling: the cells are re-laid on the grid when the handle is released
+// moving, turning, scaling: the shape follows the handle as a picture, the cells change when the handle is released
+const liveMatrix = new THREE.Matrix4(), pivotBack = new THREE.Matrix4();
+gizmo.addEventListener('objectChange', () => {
+  if (!gizmo.start || !selected) return;
+  liveMatrix.compose(gizmoTarget.position, gizmoTarget.quaternion, gizmoTarget.scale).multiply(pivotBack.makeTranslation(-gizmo.start.x, -gizmo.start.y, -gizmo.start.z));
+  selected.mesh.matrixAutoUpdate = false; selected.mesh.matrix.copy(liveMatrix); selected.mesh.matrixWorldNeedsUpdate = true;
+});
 gizmo.addEventListener('dragging-changed', (e) => {
   controls.enabled = !e.value;
   if (e.value) { pushUndo(); gizmo.start = cellBox(selected).getCenter(new THREE.Vector3()); return; }
-  const c = selected, v = data.voxel, from = gizmo.start, to = gizmoTarget.position, s = gizmoTarget.scale, seen = new Set(), out = [];
-  const step = Math.max(s.x, s.y, s.z) > 1 ? Math.ceil(Math.max(s.x, s.y, s.z) * 2) : 1;   // enlarging must not leave gaps
-  for (const cell of unflatten(c.cells)) for (let a = 0; a < step; a++) for (let b = 0; b < step; b++) for (let d = 0; d < step; d++) {
-    const p = [(cell[0] + (a + 0.5) / step) * v, (cell[1] + (b + 0.5) / step) * v, (cell[2] + (d + 0.5) / step) * v];
-    const n = [from.x, from.y, from.z].map((o, i) => Math.floor(([to.x, to.y, to.z][i] + (p[i] - o) * [s.x, s.y, s.z][i]) / v));
-    const key = cellKey(...n);
-    if (!seen.has(key)) { seen.add(key); out.push(n); }
+  const c = selected, v = data.voxel, from = gizmo.start.toArray(), to = gizmoTarget.position.toArray();
+  gizmo.start = null;
+  if (tool === 'move') c.cells = shiftCells(c.cells, to.map((p, a) => Math.round((p - from[a]) / v)));
+  else {
+    const out = transformCells(c.cells, v, from, to, gizmoTarget.scale.toArray(), gizmoTarget.quaternion.toArray());
+    if (out.length) c.cells = out; else toast('너무 작아져서 되돌렸습니다');
   }
-  c.cells = flatten(out); c.fallback = false;
+  c.fallback = false;
   rebuildMesh(c); renderList(); showSelected(); placeGizmo();
 });
 
@@ -394,7 +399,7 @@ addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); return; }
   if (e.target.matches('input[type=text]') || e.ctrlKey) return;
-  const t = { 1: 'orbit', 2: 'erase', 3: 'paint', 4: 'move', 5: 'scale' }[e.key];
+  const t = { 1: 'orbit', 2: 'erase', 3: 'paint', 4: 'move', 5: 'rotate', 6: 'scale' }[e.key];
   if (t) setTool(t);
   if (e.key === 'Escape' && placing) { placing = null; $('mode').hidden = true; }
 });
@@ -416,4 +421,9 @@ resize(); setTool('orbit');
   $('scan').onchange = () => openScan($('scan').value).catch((e) => { $('empty').textContent = e.message; $('empty').hidden = false; });
   openScan($('scan').value).catch((e) => { $('empty').textContent = e.message; $('empty').hidden = false; });
 })();
-window.__editor = { get data() { return data; }, select, setView, get selected() { return selected; } };
+window.__editor = { get data() { return data; }, select, setView, get selected() { return selected; },
+  handle(axis, f) {   // screen position on a gizmo handle, for automated checks
+    const size = gizmoTarget.position.distanceTo(camera.position) * Math.tan(camera.fov * Math.PI / 360) * 2 / 7 * 1.0;
+    const p = gizmoTarget.position.clone().add(new THREE.Vector3(...axis).multiplyScalar(size * f)).project(camera), b = canvas.getBoundingClientRect();
+    return [b.left + (p.x + 1) / 2 * b.width, b.top + (1 - p.y) / 2 * b.height];
+  } };

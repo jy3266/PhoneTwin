@@ -10,7 +10,7 @@ body.editor .stage canvas { width: 100%; height: 100%; display: block; }
 .editor .list li.on { outline: 1px solid #67e8f9; }
 .editor .list li .meta { display: flex; gap: 6px; }
 .editor .tag { color: #fbbf24; }
-.tools { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin-bottom: 8px; }
+.tools { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; margin-bottom: 8px; }
 .tools button { padding: 6px 0; font-size: 12px; }
 .tools button.on { background: #0e7490; color: #fff; }
 .mode, .toast { position: absolute; left: 50%; transform: translateX(-50%); padding: 6px 12px; border-radius: 6px; background: rgba(8, 14, 20, .85); color: #e5edf5; font-size: 13px; pointer-events: none; }
