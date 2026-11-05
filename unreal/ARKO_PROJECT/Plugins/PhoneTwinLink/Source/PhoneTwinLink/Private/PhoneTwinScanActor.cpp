@@ -96,6 +96,13 @@ static FAutoConsoleCommandWithWorldAndArgs GPhoneTwinLightCmd(TEXT("PhoneTwin.Li
 		if (World) for (TActorIterator<APhoneTwinScanActor> It(World); It; ++It) It->SetLightUp(Args.Num() ? FCString::Atoi(*Args[0]) != 0 : !It->bLightUp);
 	}));
 
+static FAutoConsoleCommandWithWorldAndArgs GPhoneTwinLookCmd(TEXT("PhoneTwin.Look"), TEXT("PhoneTwin.Look 0|1|2|3 — 0 old glow, 1 memory, 2 wave (touch waves), 3 starlight (no argument = next)"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (World) for (TActorIterator<APhoneTwinScanActor> It(World); It; ++It)
+			It->SetLook((EPhoneTwinLook)(Args.Num() ? FMath::Clamp(FCString::Atoi(*Args[0]), 0, 3) : ((uint8)It->Look + 1) % 4));
+	}));
+
 // ================================================================================================ HUD (Slate, no assets needed)
 class SPhoneTwinHud : public SCompoundWidget
 {
@@ -505,19 +512,25 @@ void APhoneTwinScanActor::MeasureObjects()
 			const FVector D = Probe - O.C; const double Len = D.Size();
 			O.FloorD = FMath::Max(0.0, FVector::Dist2D(TrackerPos, O.C) - O.R); O.HandD = FMath::Max(0.0, Len - O.R);
 			O.HandNear = Len > 1e-3 ? O.C + D / Len * O.R : Probe;
+			const FVector F(TrackerPos.X - O.C.X, TrackerPos.Y - O.C.Y, 0); const double FLen = F.Size();
+			O.FloorNear = FLen > 1e-3 ? O.C + F / FLen * FMath::Min(O.R, FLen) : O.C;
+			O.FloorNear.Z = FMath::Clamp(TrackerPos.Z, O.C.Z - O.R, O.C.Z + O.R);
 			continue;
 		}
-		double Floor2 = 1e24, Hand2 = 1e24; int32 HandAt = 0;
+		double Floor2 = 1e24, Hand2 = 1e24, ZLo = 1e24, ZHi = -1e24; int32 HandAt = 0, FloorAt = 0;
 		for (int32 i = 0; i < O.Cells.Num(); i++)
 		{
 			const FVector& C = O.Cells[i];
 			const double Dx = C.X - TrackerPos.X, Dy = C.Y - TrackerPos.Y, F2 = Dx * Dx + Dy * Dy;
-			if (F2 < Floor2) Floor2 = F2;
+			if (F2 < Floor2) { Floor2 = F2; FloorAt = i; }
+			ZLo = FMath::Min(ZLo, C.Z); ZHi = FMath::Max(ZHi, C.Z);
 			const double H2 = FVector::DistSquared(C, Probe);
 			if (H2 < Hand2) { Hand2 = H2; HandAt = i; }
 		}
 		O.FloorD = FMath::Max(0.0, FMath::Sqrt(Floor2) - O.CellR); O.HandD = FMath::Max(0.0, FMath::Sqrt(Hand2) - O.CellR);
 		O.HandNear = O.Cells[HandAt];
+		// where a touch wave starts: the nearest cell in the floor plane at the audience's height (same spot as the web's checkTouches)
+		O.FloorNear = O.Cells[FloorAt]; O.FloorNear.Z = FMath::Clamp(TrackerPos.Z, ZLo - O.CellR, ZHi + O.CellR);
 	}
 }
 
@@ -683,7 +696,13 @@ void APhoneTwinScanActor::UpdateSounds()
 		const bool bHand = bTracking && bContact && ObjectId == Objects[i].Id;
 		const bool bTouch = bTracking && !Objects[i].bMuted && (bHand || FloorD[i] <= TouchDistance);
 		const bool bRelease = !bTracking || (!bHand && FloorD[i] > TouchDistance + 15.0);
+		const bool bWasTouching = Sounds[i].bTouching; const double Struck = Sounds[i].LastStrike;
 		DriveSound(Sounds[i], Gain[i], bTouch, bRelease, i);
+		if (Sounds[i].LastStrike != Struck)   // the touch chime rang: a wave of light starts there too (web 물결)
+		{
+			StartTouchWave(bHand ? Objects[i].HandNear : Objects[i].FloorNear, bWasTouching ? .55f : 1.f);   // first touch strong, staying in touch softer
+			LastWaveName = Objects[i].Name;
+		}
 		const float Shown = Now - Sounds[i].LastStrike < 2.0 ? 1.f : Gain[i];
 		if (Shown > Loudest && !Sounds[i].Idea.IsEmpty()) { Loudest = Shown; SoundNow = FString::Printf(TEXT("%s%s — %s"), Now - Sounds[i].LastStrike < 2.0 ? TEXT("닿음 ") : TEXT(""), *Objects[i].Name, *Sounds[i].Idea); }
 	}
@@ -747,6 +766,7 @@ void APhoneTwinScanActor::HandleKeys()
 	if (PC->WasInputKeyJustPressed(EKeys::LeftBracket)) SetPointSize(PointSize / 1.2f);
 	if (PC->WasInputKeyJustPressed(EKeys::RightBracket)) SetPointSize(PointSize * 1.2f);
 	if (PC->WasInputKeyJustPressed(EKeys::K)) SetLightUp(!bLightUp);
+	if (PC->WasInputKeyJustPressed(EKeys::L)) SetLook((EPhoneTwinLook)(((uint8)Look + 1) % 4));
 	if (PC->WasInputKeyJustPressed(EKeys::B)) bShowCollisions = !bShowCollisions;
 }
 
@@ -758,11 +778,40 @@ void APhoneTwinScanActor::SetLightUp(bool bOn)
 	ApplyLook();
 }
 
+void APhoneTwinScanActor::SetLook(EPhoneTwinLook NewLook)
+{
+	Look = NewLook;
+	LightTimer = 1e9;
+	ApplyLook();
+}
+
+void APhoneTwinScanActor::StartTouchWave(FVector Where, float Amp)
+{
+	PhoneTwin::FTouchWave& W = Waves[WaveNext];
+	W.At = FVector3f(Where); W.Start = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0; W.Amp = Amp;
+	WaveNext = (WaveNext + 1) % 4;
+	LastWaveTime = W.Start;
+	LightTimer = 1e9;   // show it on the next light frame
+	if (bTrace) UE_LOG(LogPhoneTwin, Log, TEXT("touch wave %.2f at %s"), Amp, *Where.ToString());
+}
+
+FString APhoneTwinScanActor::LookText() const
+{
+	switch (Look)
+	{
+	case EPhoneTwinLook::Memory: return TEXT("기억");
+	case EPhoneTwinLook::Wave: return TEXT("물결");
+	case EPhoneTwinLook::Starlight: return TEXT("별빛");
+	default: return TEXT("예전 빛");
+	}
+}
+
 void APhoneTwinScanActor::TickLight(float DeltaSeconds)
 {
 	// the sharp area follows the audience and fades in / out over a second when tracking starts or stops
 	if (bTracking) RevealCenter = TrackerPos;
 	Reveal = FMath::FInterpConstantTo(Reveal, bTracking ? 1.f : 0.f, DeltaSeconds, 1.f);
+	if (Trail.IsValid()) Trail->Update(DeltaSeconds, FVector2f(RevealCenter.X, RevealCenter.Y), RevealRadius, TrailSeconds, bTracking);
 	if (!bLightUp || !LightBase.IsValid() || bLightPending || LightBuffers.Num() < 2) return;
 	if ((LightTimer += DeltaSeconds) < 1.0 / LightRateHz) return;
 	LightTimer = 0;
@@ -776,17 +825,27 @@ void APhoneTwinScanActor::TickLight(float DeltaSeconds)
 	TSharedPtr<const TArray<FLidarPointCloudPoint>> Base = LightBase;
 	TSharedRef<FThreadSafeBool> Working = LightWorking;
 	TWeakObjectPtr<APhoneTwinScanActor> Weak(this);
+	// immersive look = the web's shader; the worker gets its own copy of the trail so the game thread keeps updating this one
+	const bool bImmersive = Look != EPhoneTwinLook::Classic;
+	PhoneTwin::FImmersiveParams I;
+	I.Mode = Look == EPhoneTwinLook::Memory ? 0 : Look == EPhoneTwinLook::Wave ? 1 : 2;
+	I.RadiusCm = RevealRadius; I.ScatterM = Scatter; I.Reveal = Reveal; I.Gain = DensityGain; I.FloorZ = (float)FloorZ; I.WaveSpeed = WaveSpeed;
+	for (int32 k = 0; k < 4; k++) I.Waves[k] = Waves[k];
+	if (bImmersive && Trail.IsValid() && TrailSeconds > 0) I.Memory = MakeShared<PhoneTwin::FTrailMemory>(*Trail);
+	I.MaxPoints = LightMaxPoints;
 	bLightPending = true; *Working = true;
 	// build the frame and its octree off the game thread into the cloud that is not on screen
-	Async(EAsyncExecution::ThreadPool, [Weak, Target, Base, P, Center, Time, Buffer, Gen, Working]()
+	Async(EAsyncExecution::ThreadPool, [Weak, Target, Base, P, I, bImmersive, Center, Time, Buffer, Gen, Working]()
 	{
 		const double T0 = FPlatformTime::Seconds();
 		TArray<FLidarPointCloudPoint> Out;
-		PhoneTwin::BuildGlow(*Base, P, Center, Time, Out);
+		if (bImmersive) PhoneTwin::BuildImmersive(*Base, I, Center, Time, Out);
+		else PhoneTwin::BuildGlow(*Base, P, Center, Time, Out);
+		const double T1 = FPlatformTime::Seconds();
 		const bool bOk = Out.Num() > 0 && Target->SetData(Out);
-		const float Ms = (float)((FPlatformTime::Seconds() - T0) * 1000.0); const int32 Num = Out.Num();
+		const float Ms = (float)((FPlatformTime::Seconds() - T0) * 1000.0), BuildMs = (float)((T1 - T0) * 1000.0); const int32 Num = Out.Num();
 		*Working = false;
-		AsyncTask(ENamedThreads::GameThread, [Weak, Buffer, Gen, bOk, Ms, Num]() { if (APhoneTwinScanActor* A = Weak.Get()) A->OnLightBuilt(bOk ? Buffer : -1, Gen, Ms, Num); });
+		AsyncTask(ENamedThreads::GameThread, [Weak, Buffer, Gen, bOk, Ms, BuildMs, Num]() { if (APhoneTwinScanActor* A = Weak.Get()) { A->LightBuildMs = BuildMs; A->OnLightBuilt(bOk ? Buffer : -1, Gen, Ms, Num); } });
 	});
 }
 
@@ -795,7 +854,7 @@ void APhoneTwinScanActor::OnLightBuilt(int32 Buffer, uint32 Gen, float Ms, int32
 	bLightPending = false;
 	LightMs = Ms;
 	const double Now = FPlatformTime::Seconds();
-	if (Now - LightLogTime > 10.0) { LightLogTime = Now; UE_LOG(LogPhoneTwin, Log, TEXT("light frame: %d points, %.1f ms (reveal %.2f) · game %.1f fps"), Num, Ms, Reveal, 1.0 / FMath::Max(1e-4, FApp::GetDeltaTime())); }
+	if (Now - LightLogTime > 10.0) { LightLogTime = Now; UE_LOG(LogPhoneTwin, Log, TEXT("light frame: %d points, %.1f ms (colours %.1f ms) (reveal %.2f) · game %.1f fps"), Num, Ms, LightBuildMs, Reveal, 1.0 / FMath::Max(1e-4, FApp::GetDeltaTime())); }
 	if (Buffer < 0 || Gen != LightGen || !bLightUp || !LightBuffers.IsValidIndex(Buffer)) return;
 	Cloud->SetPointCloud(LightBuffers[Buffer]);
 	ApplyLook();
@@ -805,7 +864,9 @@ void APhoneTwinScanActor::OnLightBuilt(int32 Buffer, uint32 Gen, float Ms, int32
 void APhoneTwinScanActor::SetPointSize(float NewSize)
 {
 	PointSize = FMath::Clamp(NewSize, .05f, 20.f);
-	if (Cloud) { Cloud->PointSize = PointSize; Cloud->MarkRenderStateDirty(); }
+	const bool bSmall = bLightUp && Look != EPhoneTwinLook::Classic;   // the web draws fine grains with dark gaps between them
+	const float Size = PointSize * (bSmall ? ImmersivePointScale : 1.f);
+	if (Cloud && Cloud->PointSize != Size) { Cloud->PointSize = Size; Cloud->MarkRenderStateDirty(); }
 }
 
 void APhoneTwinScanActor::UpdateOverview(float DeltaSeconds)
@@ -892,7 +953,8 @@ void APhoneTwinScanActor::HideOthers()
 void APhoneTwinScanActor::ApplyLook()
 {
 	// points as light on a dark background: emissive gain above 1 + bloom, fixed exposure so the darkness does not get brightened
-	if (Cloud) { Cloud->Gain = FVector4(1, 1, 1, bLightUp ? LightGain : 1.f); Cloud->ApplyRenderingParameters(); }
+	SetPointSize(PointSize);
+	if (Cloud) { Cloud->Gain = FVector4(1, 1, 1, !bLightUp ? 1.f : Look == EPhoneTwinLook::Classic ? LightGain : ImmersiveGain); Cloud->ApplyRenderingParameters(); }
 	for (UCameraComponent* C : {TrackerCamera.Get(), OverviewCamera.Get()})
 	{
 		if (!C) continue;
@@ -953,7 +1015,13 @@ FString APhoneTwinScanActor::HudText() const
 	if (!SoundNow.IsEmpty()) S += TEXT("\n♪ ") + SoundNow;
 	S += FString::Printf(TEXT("\n스캔: %s"), *ScanStatus);
 	if (!CollisionStatus.IsEmpty()) S += TEXT("\n콜리전: ") + CollisionStatus;
-	S += bLightUp ? FString::Printf(TEXT("\n점구름: 빛 · 관객 %.0f cm 안이 가장 밝고 %.0f cm 밖은 어둡게 [K]"), LitRadius, FadeRadius) : FString(TEXT("\n점구름: 원본 색 [K]"));
+	if (!bLightUp) S += TEXT("\n점구름: 원본 색 [K]");
+	else if (Look == EPhoneTwinLook::Classic) S += FString::Printf(TEXT("\n점구름: 예전 빛 · 관객 %.0f cm 안이 가장 밝고 %.0f cm 밖은 어둡게 [K 끄기 · L 모양]"), LitRadius, FadeRadius);
+	else
+	{
+		S += FString::Printf(TEXT("\n점구름: 몰입 보기 '%s' · 반경 %.1f m · 흔적 %.0f초 [K 끄기 · L 모양]"), *LookText(), RevealRadius / 100.f, TrailSeconds);
+		if (Look == EPhoneTwinLook::Wave && Now - LastWaveTime < 3.0) S += FString::Printf(TEXT(" · ✦ %s 물결"), *LastWaveName);
+	}
 	if (bHideLevelGeometry) S += TEXT(" · 점구름만 [H]");
 	S += FString::Printf(TEXT("\n보기: %s · 점 크기 %.2f%s"), View == EPhoneTwinView::Overview ? TEXT("전체 (멀리서)") : View == EPhoneTwinView::Tracker ? TEXT("장치 시점") : TEXT("레벨 캐릭터"),
 		PointSize, bSendOsc ? *FString::Printf(TEXT(" · OSC → %s:%d"), *OscAddress, OscPort) : TEXT(""));
@@ -1028,6 +1096,15 @@ void APhoneTwinScanActor::ApplyScan(const FString& Id, TSharedPtr<FPhoneTwinLoad
 	SetPointSize(PointSize);
 	ApplyLook();
 	if (Data->Bounds.IsValid) ScanBounds = Data->Bounds;
+	{
+		// the web's memRect (scan + 1 m around) and uGain (dense scans fainter so they do not pile up into a wall)
+		const FVector Sz = ScanBounds.GetSize();
+		Trail = MakeShared<PhoneTwin::FTrailMemory>();
+		Trail->Reset(FVector2f(ScanBounds.Min.X - 100.0, ScanBounds.Min.Y - 100.0), FVector2f(Sz.X + 200.0, Sz.Y + 200.0));
+		const double Area = FMath::Max(1.0, Sz.X * Sz.Y / 1e4);
+		DensityGain = (float)FMath::Clamp(FMath::Sqrt(20000.0 / FMath::Max(1.0, PointCount / Area)), .45, 1.0);
+		for (PhoneTwin::FTouchWave& W : Waves) W = PhoneTwin::FTouchWave();
+	}
 
 	LoadedMeta = Meta; LoadedScanId = Id;
 	RebuildObjects();

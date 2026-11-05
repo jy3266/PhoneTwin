@@ -9,6 +9,7 @@
 #include "GameFramework/Actor.h"
 #include "PhoneTwinCore.h"
 #include "LidarPointCloudShared.h"
+#include "PhoneTwinCloud.h"
 #include "PhoneTwinScanActor.generated.h"
 
 class ULidarPointCloudComponent;
@@ -28,6 +29,15 @@ enum class EPhoneTwinSource : uint8
 {
 	Phone UMETA(DisplayName = "휴대폰 (ARCore)"),
 	Esp32 UMETA(DisplayName = "UWB tag (Pi OSC / ESP32)")
+};
+
+UENUM(BlueprintType)
+enum class EPhoneTwinLook : uint8
+{
+	Classic UMETA(DisplayName = "Glow (old)"),
+	Memory UMETA(DisplayName = "Memory (web 기억)"),
+	Wave UMETA(DisplayName = "Wave (web 물결)"),
+	Starlight UMETA(DisplayName = "Starlight (web 별빛)")
 };
 
 UENUM(BlueprintType)
@@ -114,13 +124,48 @@ public:
 
 	/** Brightness updates per second (each one rebuilds the cloud on a worker thread). */
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Light", meta = (ClampMin = "2", ClampMax = "30"))
-	float LightRateHz = 12.f;
+	float LightRateHz = 20.f;
 
 	/** Most points drawn while Light Up is on (larger scans are thinned evenly). */
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Light", meta = (ClampMin = "10000"))
 	int32 LightMaxPoints = 500000;
 
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SetLightUp(bool bOn);
+
+	// ---------------------------------------------------------------- immersive look (same as the web's 몰입 보기)
+	/** How the lit point cloud looks. Wave/Memory/Starlight = the web page immersive.html (real colours around the audience,
+	 *  far points drift as blue dust, a trail stays where the audience walked); Wave adds a gold wave from every collision touch.
+	 *  Classic = the older glow. Key L cycles. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light")
+	EPhoneTwinLook Look = EPhoneTwinLook::Wave;
+
+	/** Immersive: real colours within this floor distance (cm) of the audience (web 드러나는 반경 1.6 m). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "20", ClampMax = "600"))
+	float RevealRadius = 160.f;
+
+	/** Immersive: how far the far points drift as dust, in metres (web 흩어짐 0.6). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0", ClampMax = "1.5"))
+	float Scatter = .6f;
+
+	/** Immersive: half-life (s) of the trail left where the audience walked, 0 = none (web 흔적 유지 8 s). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0", ClampMax = "30"))
+	float TrailSeconds = 8.f;
+
+	/** Immersive: emissive strength (the Classic look uses Light Gain). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0.1", ClampMax = "20"))
+	float ImmersiveGain = 1.3f;
+
+	/** Immersive: points are drawn this much smaller than Point Size (the web's fine grains with dark gaps). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0.1", ClampMax = "2"))
+	float ImmersivePointScale = .55f;
+
+	/** Wave look: speed of the touch wave (cm/s, web 1.8 m/s). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "10"))
+	float WaveSpeed = 180.f;
+
+	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SetLook(EPhoneTwinLook NewLook);
+	/** Start a touch wave at a point (actor space, cm). Amp 1 = first touch, .55 = still touching. */
+	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void StartTouchWave(FVector Where, float Amp = 1.f);
 
 	// ---------------------------------------------------------------- input switch
 	/** Which device moves the hand in the scan: the phone (ARCore) or the ESP32 (UWB position + IMU rotation). Keys 1 / 2. */
@@ -363,7 +408,7 @@ private:
 		int32 Id = 0; FString Label, Name; FVector C = FVector::ZeroVector; double R = 0; bool bAi = false;
 		TArray<FVector> Cells; double CellR = 0;              // real shape; no cells = sphere C, R
 		float Volume = 1, FullCm = -1, MaxCm = -1; bool bMuted = false;
-		double FloorD = 1e12, HandD = 1e12; FVector HandNear = FVector::ZeroVector;   // refreshed every frame
+		double FloorD = 1e12, HandD = 1e12; FVector HandNear = FVector::ZeroVector, FloorNear = FVector::ZeroVector;   // refreshed every frame
 	};
 	/** Sounds of one object (or of the scan surface): an approach layer and a touch layer. Pointers are kept alive by ObjectAudio / the sound maps. */
 	struct FObjSound
@@ -441,7 +486,10 @@ private:
 	TSharedPtr<const TArray<FLidarPointCloudPoint>> LightBase;
 	TSharedRef<FThreadSafeBool> LightWorking = MakeShared<FThreadSafeBool>(false);
 	bool bLightPending = false; int32 LightNext = 0; uint32 LightGen = 0; double LightTimer = 0;
-	float Reveal = 0, LightMs = 0; FVector RevealCenter = FVector::ZeroVector; double LightLogTime = 0;
+	float Reveal = 0, LightMs = 0, LightBuildMs = 0; FVector RevealCenter = FVector::ZeroVector; double LightLogTime = 0;
+	PhoneTwin::FTouchWave Waves[4]; int32 WaveNext = 0; double LastWaveTime = -1e9; FString LastWaveName;
+	TSharedPtr<PhoneTwin::FTrailMemory> Trail; float DensityGain = 1;
+	FString LookText() const;
 
 	TSharedPtr<IWebSocket> Relay;
 	FString RelayStatus, RelayPeers;

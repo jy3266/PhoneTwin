@@ -183,6 +183,44 @@ bool FPhoneTwinGlowTest::RunTest(const FString&)
 	TestTrue(TEXT("near points brighter than far ones"), NearR > FarR * 2.5);
 	P.MaxPoints = 500; BuildGlow(Base, P, FVector3f(0, 0, 0), 3.0, Out);
 	TestTrue(TEXT("point budget"), Out.Num() <= 650);
+
+	// immersive look (web 몰입 보기): real colours near the audience, drifting dust far away, gold touch waves
+	FImmersiveParams I;   // 물결, 1.6 m
+	TArray<FLidarPointCloudPoint> Out2;
+	BuildImmersive(Base, I, FVector3f(0, 0, 0), 3.0, Out2);
+	int32 NearN = 0, FarN = 0, NearMoved = 0, FarMoved = 0; double NearC = 0, FarB = 0;
+	for (const FLidarPointCloudPoint& Q : Out2)
+	{
+		const bool bNear = Q.Location.X < 300.f;
+		(bNear ? NearN : FarN)++;
+		if (bNear) { NearC += Q.Color.R; if (Q.Location.Y < 50.f) NearMoved += FMath::Abs(Q.Location.X - 10.f) > .5f || FMath::Abs(Q.Location.Z - 50.f) > .5f ? 1 : 0; }   // within 0.5 m: fully lit
+		else { FarB += Q.Color.B; } if (!bNear) FarMoved += FMath::Abs(Q.Location.X - 900.f) > 1.f || FMath::Abs(Q.Location.Z - 50.f) > 1.f ? 1 : 0;
+	}
+	TestEqual(TEXT("immersive: every near point drawn"), NearN, 1000);
+	TestEqual(TEXT("immersive: near points stay in place"), NearMoved, 0);
+	TestTrue(TEXT("immersive: near points keep the scan colour (red)"), NearC / FMath::Max(1, NearN) > 150.0);
+	TestEqual(TEXT("immersive: far points all drawn (no blobs from thinning)"), FarN, 1000);
+	TestTrue(TEXT("immersive: far points are faint blue dust"), FarB / FMath::Max(1, FarN) < 80.0 && FarB > 0);
+	TestTrue(TEXT("immersive: far dust drifts"), FarMoved > FarN * 0.9);
+
+	I.Waves[0].At = FVector3f(900.f, 0.f, 50.f); I.Waves[0].Start = 2.0; I.Waves[0].Amp = 1;   // touched 1 s ago at 9 m
+	TestTrue(TEXT("wave ring 1.8 m from the touch after 1 s"), WaveAt(I, FVector3f(900.f, 180.f, 50.f), 3.0) > .6f);
+	TestTrue(TEXT("no wave far ahead of the ring"), WaveAt(I, FVector3f(900.f, 400.f, 50.f), 3.0) < .01f);
+	TestTrue(TEXT("wave gone after 8 s"), WaveAt(I, FVector3f(900.f, 180.f, 50.f), 11.0) == 0.f);
+	TArray<FLidarPointCloudPoint> Base2, Out3;
+	for (int32 i = 0; i < 1000; i++) Base2.Emplace(FVector3f(900.f + (i % 10), 180.f, 50.f), FColor(40, 40, 40), true, (uint8)0);
+	BuildImmersive(Base2, I, FVector3f(0, 0, 0), 3.0, Out3);
+	double Gold = 0; for (const FLidarPointCloudPoint& Q : Out3) Gold += (double)Q.Color.R - Q.Color.B;
+	TestTrue(TEXT("points on the ring light up gold"), Out3.Num() > 900 && Gold / FMath::Max(1, Out3.Num()) > 5.0);
+	I.Mode = 0; BuildImmersive(Base2, I, FVector3f(0, 0, 0), 3.0, Out3);
+	double Dim = 0; for (const FLidarPointCloudPoint& Q : Out3) Dim += Q.Color.R;
+	TestTrue(TEXT("기억 look has no waves"), Dim / FMath::Max(1, Out3.Num()) < 60.0);
+
+	FTrailMemory M; M.Reset(FVector2f(-300.f), FVector2f(600.f));
+	M.Update(.1f, FVector2f(0.f), 160.f, 8.f, true);
+	TestTrue(TEXT("trail where the audience was"), M.Sample(0, 0) > .9f && M.Sample(250, 250) < .01f);
+	M.Update(8.f, FVector2f(0.f), 160.f, 8.f, false);
+	TestTrue(TEXT("trail halves in 8 s"), FMath::Abs(M.Sample(0, 0) - .5f) < .06f);
 	return true;
 }
 #endif
