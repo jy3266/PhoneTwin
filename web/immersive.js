@@ -65,7 +65,7 @@ function updateMemory(dt, p, radius, halfLife) {
 // ---------------------------------------------------------------- the point shader
 const uniforms = {
   uTime: { value: 0 }, uAud: { value: new THREE.Vector3() }, uRadius: { value: 1.6 }, uScatter: { value: 0.6 },
-  uSize: { value: 0.014 }, uScale: { value: 500 }, uMode: { value: 1 }, uWaveT: { value: 99 }, uGain: { value: 1 },
+  uSize: { value: 0.014 }, uScale: { value: 500 }, uMode: { value: 1 }, uWave: { value: [0, 1, 2, 3].map(() => new THREE.Vector4(0, 0, 0, 99)) }, uWaveAmp: { value: [0, 0, 0, 0] }, uGain: { value: 1 },
   uMem: { value: memTex }, uMemRect: { value: memRect }, uFloor: { value: 0 },
 };
 const pointMat = new THREE.ShaderMaterial({
@@ -73,7 +73,9 @@ const pointMat = new THREE.ShaderMaterial({
   vertexShader: /* glsl */`
     attribute vec3 aColor;
     attribute float aRand;
-    uniform float uTime, uRadius, uScatter, uSize, uScale, uMode, uWaveT, uFloor;
+    uniform float uTime, uRadius, uScatter, uSize, uScale, uMode, uFloor;
+    uniform vec4 uWave[4];      // xyz = where a collision was touched, w = seconds since (99 = none)
+    uniform float uWaveAmp[4];
     uniform vec3 uAud;
     uniform vec4 uMemRect;
     uniform sampler2D uMem;
@@ -86,10 +88,15 @@ const pointMat = new THREE.ShaderMaterial({
       float mem = texture2D(uMem, (p.xz - uMemRect.xy) / uMemRect.zw).r;
       float lit = max(near, mem * (uMode > 1.5 ? 0.9 : 0.7));
       float wave = 0.0;
-      if (uMode > 0.5 && uMode < 1.5) {               // 물결: a ring of light sweeps out from the audience
-        float wr = uWaveT * 2.4;
-        wave = exp(-pow((d - wr) * 4.0, 2.0)) * exp(-uWaveT * 0.4);
-        lit = max(lit, wave * 0.9);
+      if (uMode > 0.5 && uMode < 1.5) {               // 물결: touching a collision sends a wave of light out through the room
+        for (int i = 0; i < 4; i++) {
+          float age = uWave[i].w;
+          if (age > 8.0) continue;
+          float dw = length(p - uWave[i].xyz), wr = age * 1.8;
+          float ring = exp(-pow((dw - wr) * 4.5, 2.0)) + 0.35 * exp(-pow((dw - wr * 0.6) * 7.0, 2.0));   // a thin main wave and a softer echo
+          wave = max(wave, ring * exp(-age * 0.45) * uWaveAmp[i]);
+        }
+        lit = max(lit, wave * 0.8);
       }
       float far = 1.0 - lit;
       // far points drift like dust and rise slowly; the closer the audience, the more they settle back into the room
@@ -99,11 +106,11 @@ const pointMat = new THREE.ShaderMaterial({
       p += drift * uScatter * far * far * (0.3 + 0.7 * aRand);
       vec4 mv = modelViewMatrix * vec4(p, 1.0);
       gl_Position = projectionMatrix * mv;
-      float sz = uSize * mix(0.6, 1.0, lit) * (1.0 + wave * 1.2);
+      float sz = uSize * mix(0.6, 1.0, lit) * (1.0 + wave * 0.9);
       gl_PointSize = clamp(sz * uScale / -mv.z, 1.0, 22.0);
       float grey = dot(aColor, vec3(0.299, 0.587, 0.114));
       vec3 ghost = vec3(0.45, 0.62, 1.0) * (0.35 + grey);
-      vCol = mix(ghost, aColor * 1.1, lit) + vec3(0.55, 0.9, 1.0) * wave * 0.45;
+      vCol = mix(ghost, aColor * 1.1, lit) + vec3(1.0, 0.78, 0.4) * wave * 0.45;   // touch waves are warm gold
       float tw = 0.65 + 0.35 * sin(uTime * (1.2 + aRand * 3.0) + aRand * 50.0);
       float farA = (uMode > 1.5 ? 0.30 : 0.10) * tw * (1.0 - smoothstep(uRadius, uRadius * 5.0, d) * 0.6);
       vA = mix(farA, 1.0, lit) * smoothstep(0.2, 0.7, -mv.z);   // no huge dots right against the lens
@@ -162,7 +169,7 @@ function wingGeometry(points) {
 const foreGeo = wingGeometry([[0, 0.015], [0.05, 0.06], [0.13, 0.13], [0.18, 0.11], [0.2, 0.06], [0.15, 0.0], [0.1, -0.01], [0.06, -0.015], [0.02, -0.01], [0, -0.005]]);
 const hindGeo = wingGeometry([[0, -0.005], [0.05, -0.01], [0.12, -0.03], [0.12, -0.08], [0.11, -0.13], [0.05, -0.14], [0.03, -0.1], [0.015, -0.07], [0.005, -0.04], [0, -0.02]]);
 const wingMat = new THREE.MeshBasicMaterial({ map: wingTexture(), transparent: true, opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
-const butterfly = new THREE.Group(); butterfly.scale.setScalar(1.5); me.add(butterfly);
+const butterfly = new THREE.Group(); butterfly.scale.setScalar(0.75); me.add(butterfly);
 const wings = [];
 for (const side of [1, -1]) {
   const pivot = new THREE.Group(); pivot.scale.x = side; butterfly.add(pivot);
@@ -252,17 +259,59 @@ function showCloud(buffer, m) {
   info.points = n;
 }
 
+// ---------------------------------------------------------------- collisions: touching one starts a wave (물결)
+// Same rule as Unreal: touching = floor-plane distance to the shape within TOUCH_M; still touching -> a softer wave every 4 s.
+const TOUCH_M = 0.35, TOUCH_REPEAT_S = 4;
+let shapes = [], touchAcc = 0, waveNext = 0;
+function setShapes(file) {
+  shapes = [];
+  if (!file || !Array.isArray(file.collisions)) { info.shapes = 0; return; }
+  const v = file.voxel || 0.04;
+  for (const c of file.collisions) {
+    if (!c.cells || c.cells.length < 3 || c.muted) continue;
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < c.cells.length; i++) { const a = i % 3; lo[a] = Math.min(lo[a], c.cells[i] * v); hi[a] = Math.max(hi[a], (c.cells[i] + 1) * v); }
+    shapes.push({ name: c.name || c.label, cells: c.cells, v, lo, hi, touching: false, lastWave: -1e9 });
+  }
+  info.shapes = shapes.length;
+}
+function startWave(at, amp) {
+  const w = uniforms.uWave.value[waveNext]; w.set(at.x, at.y, at.z, 0);
+  uniforms.uWaveAmp.value[waveNext] = amp; waveNext = (waveNext + 1) % 4;
+}
+function checkTouches(p, now) {
+  for (const s of shapes) {
+    // cheap box test first, then the nearest cell in the floor plane
+    const bx = Math.max(s.lo[0] - p.x, 0, p.x - s.hi[0]), bz = Math.max(s.lo[2] - p.z, 0, p.z - s.hi[2]);
+    let touching = false, best = Infinity, bi = 0;
+    if (Math.hypot(bx, bz) <= TOUCH_M) {
+      for (let i = 0; i + 2 < s.cells.length; i += 3) {
+        const dx = (s.cells[i] + 0.5) * s.v - p.x, dz = (s.cells[i + 2] + 0.5) * s.v - p.z, d = dx * dx + dz * dz;
+        if (d < best) { best = d; bi = i; }
+      }
+      touching = Math.sqrt(best) - s.v / 2 <= TOUCH_M;
+    }
+    if (touching && (!s.touching || (now - s.lastWave) / 1000 > TOUCH_REPEAT_S)) {
+      const at = new THREE.Vector3((s.cells[bi] + 0.5) * s.v, THREE.MathUtils.clamp(p.y, s.lo[1], s.hi[1]), (s.cells[bi + 2] + 0.5) * s.v);
+      startWave(at, s.touching ? 0.55 : 1);   // first touch strong, staying in touch softer
+      s.lastWave = now; info.touched = s.name; info.touchedAt = now;
+    }
+    s.touching = touching;
+  }
+}
+
 const sel = $('scan');
 let scans = [];
 async function openScan(id) {
   const e = scans.find((s) => s.id === id); if (!e) return;
   info.scan = e.id; info.loading = true;
   try {
-    const [ply, m] = await Promise.all([
+    const [ply, m, col] = await Promise.all([
       fetch(e.ply).then((r) => { if (!r.ok) throw new Error(`${e.ply} ${r.status}`); return r.arrayBuffer(); }),
       e.meta ? fetch(e.meta).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null,
+      fetch(`web_scans/${e.id}.collision.json?t=${Date.now()}`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]);
-    showCloud(ply, m); info.error = '';
+    showCloud(ply, m); setShapes(col); info.error = '';
     try { localStorage.setItem('ptImmersiveScan', id); } catch (err) { /* storage blocked */ }
     history.replaceState(null, '', `${location.search}#${encodeURIComponent(id)}`);
   } catch (err) { console.error(err); info.error = `불러오지 못했습니다: ${err.message}`; }
@@ -291,7 +340,7 @@ sel.addEventListener('change', () => openScan(sel.value));
 const live = { unrealAt: 0, unrealValid: false, unrealSrc: '', unreal: new THREE.Vector3(), unrealDir: new THREE.Vector3(1, 0, 0),
   phoneAt: 0, phoneValid: false, phone: new THREE.Vector3(), phoneDir: new THREE.Vector3(0, 0, -1),
   espAt: 0, esp: new THREE.Vector3(), espDir: new THREE.Vector3(1, 0, 0), peers: '' };
-const aud = { pos: null, dir: new THREE.Vector3(0, 0, -1), from: '', lastWave: new THREE.Vector3(), waveAt: 0 };
+const aud = { pos: null, dir: new THREE.Vector3(0, 0, -1), from: '' };
 const walker = { pos: new THREE.Vector3(0, 1.4, 0), yaw: 0, target: null, until: 0 };
 const demo = { centre: new THREE.Vector3(), rx: 1, rz: 1 };
 const keys = new Set();
@@ -605,8 +654,8 @@ function frame() {
   updateMemory(dt, p, uniforms.uRadius.value, opts.memory);
 
   // 물결: a new ring every 0.7 m walked, or every 3 s standing still
-  uniforms.uWaveT.value = (now - aud.waveAt) / 1000;
-  if (p.distanceTo(aud.lastWave) > 0.7 || uniforms.uWaveT.value > 3) { aud.lastWave.copy(p); aud.waveAt = now; }
+  for (const w of uniforms.uWave.value) if (w.w < 99) w.w += dt;
+  if ((touchAcc += dt) > 1 / 15) { touchAcc = 0; checkTouches(p, now); }
 
   me.position.copy(p); pool.position.set(p.x, floorY + 0.01, p.z);
   pool.scale.setScalar(uniforms.uRadius.value * 1.4);
@@ -644,13 +693,13 @@ function frame() {
 setInterval(() => {
   const age = (t) => (t ? `${((performance.now() - t) / 1000).toFixed(1)}초 전` : '없음');
   $('status').textContent = info.error || `${info.loading ? '불러오는 중… ' : ''}${info.scan} · ${info.points.toLocaleString('ko-KR')}점 · ${fps} fps
-관객: ${info.from}${gyro.on ? ' · ✋ 손으로 보기' : ''}
+관객: ${info.from}${gyro.on ? ' · ✋ 손으로 보기' : ''} · 콜리전 ${info.shapes || 0}개${info.touched && performance.now() - info.touchedAt < 3000 ? ` · 닿음: ${info.touched} 〰` : ''}
 릴레이: ${wsState}${live.peers ? ' · ' + live.peers : ''} · 언리얼 ${age(live.unrealAt)}${live.unrealAt && !live.unrealValid ? '(걷기 테스트 전)' : ''} · 휴대폰 ${age(live.phoneAt)} · UWB ${age(live.espAt)}`;
 }, 300);
 
 new ResizeObserver(resize).observe(stage);
 resize();
 renderer.setAnimationLoop(frame);
-window.__immersive = { camera, gyro, look, info, touch, get systemOn() { return systemOn(performance.now()); }, onLine, setHand, uniforms, butterfly, wings, walker, me };   // for automated checks
+window.__immersive = { camera, gyro, look, info, touch, get systemOn() { return systemOn(performance.now()); }, onLine, setHand, uniforms, butterfly, wings, walker, me, get shapes() { return shapes; }, startWave };   // for automated checks
 loadIndex();
 if ((window.PHONETWIN_RELAY || {}).auto !== false) connect();
