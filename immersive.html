@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phone Twin 몰입 보기</title>
+  <meta name="description" content="관객의 실제 움직임에 따라 스캔한 공간이 점으로 드러나고 흩어지는 몰입 보기.">
+  <link rel="stylesheet" href="web/immersive.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <div id="stage" class="stage"></div>
+
+  <nav class="tabs">
+    <a href="index.html">스캔 뷰어</a>
+    <a href="immersive.html" class="on">몰입 보기</a>
+  </nav>
+
+  <div id="status" class="status">불러오는 중…</div>
+
+  <button id="panelBtn" class="panel-btn" aria-label="설정 열기">⚙</button>
+  <aside id="panel" class="panel">
+    <label class="field">스캔<select id="scan"></select></label>
+
+    <div class="label">보는 방식</div>
+    <div class="seg" id="look">
+      <button data-v="0" class="on" title="가까운 곳만 또렷하고 먼 곳은 먼지처럼 흩어짐">기억</button>
+      <button data-v="1" title="관객에게서 빛의 고리가 퍼져 나가며 공간을 훑음">물결</button>
+      <button data-v="2" title="전체가 희미한 별빛, 지나간 자리가 오래 남음">별빛</button>
+    </div>
+
+    <div class="label">카메라</div>
+    <div class="seg" id="cam">
+      <button data-v="follow" class="on">따라가기</button>
+      <button data-v="first">1인칭</button>
+      <button data-v="orbit">자유</button>
+    </div>
+
+    <label class="slider">드러나는 반경 <input id="radius" type="range" min="0.4" max="4" step="0.1" value="1.6"><output></output></label>
+    <label class="slider">흩어짐 <input id="scatter" type="range" min="0" max="1.5" step="0.05" value="0.6"><output></output></label>
+    <label class="slider">흔적 유지(초) <input id="memory" type="range" min="0" max="30" step="1" value="8"><output></output></label>
+    <label class="slider">점 크기 <input id="size" type="range" min="0.5" max="4" step="0.1" value="1.4"><output></output></label>
+    <label class="check"><input id="bloom" type="checkbox" checked> 빛 번짐(블룸)</label>
+    <label class="check"><input id="showMe" type="checkbox" checked> 관객 빛 표시</label>
+    <p class="hint">관객 위치는 릴레이(언리얼이 보낸 위치 → 없으면 휴대폰 → ESP32)를 따릅니다. 신호가 없으면 자동으로 방 안을 천천히 걷는 시연을 보여 주고, <b>W A S D / 방향키</b>를 누르거나 바닥을 클릭하면 직접 걸어 볼 수 있습니다. <b>F</b> 전체 화면, <b>H</b> 이 창 숨기기.</p>
+  </aside>
+
+  <script src="web/config.js"></script>
+  <script type="module" src="web/immersive.js"></script>
+</body>
+</html>

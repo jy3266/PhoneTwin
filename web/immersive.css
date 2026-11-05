@@ -1,0 +1,48 @@
+:root {
+  --bg: #000;
+  --panel: rgba(10, 14, 20, .78);
+  --line: rgba(255, 255, 255, .12);
+  --text: #e8eef5;
+  --muted: #8b9aab;
+  --accent: #9fe7ff;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
+  font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+.stage { position: fixed; inset: 0; }
+.stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+.tabs { position: fixed; top: 12px; left: 12px; display: flex; gap: 2px; padding: 3px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(8px); z-index: 3; }
+.tabs a { color: var(--muted); text-decoration: none; padding: 5px 12px; border-radius: 999px; white-space: nowrap; }
+.tabs a.on { color: #000; background: var(--accent); }
+
+.status { position: fixed; left: 12px; bottom: 12px; right: 12px; max-width: 520px; color: var(--muted); font-size: 12px;
+  white-space: pre-line; pointer-events: none; z-index: 2; text-shadow: 0 0 6px #000; }
+
+.panel-btn { position: fixed; top: 12px; right: 12px; width: 36px; height: 36px; border-radius: 50%; font-size: 17px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); cursor: pointer; z-index: 4; }
+.panel { position: fixed; top: 56px; right: 12px; width: 280px; max-width: calc(100vw - 24px); max-height: calc(100vh - 110px);
+  overflow-y: auto; padding: 12px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line);
+  backdrop-filter: blur(10px); z-index: 3; }
+.panel.hidden, .hide-ui .panel, .hide-ui .tabs, .hide-ui .status, .hide-ui .panel-btn { display: none; }
+.label { color: var(--accent); font-size: 11px; letter-spacing: .08em; margin: 12px 0 6px; }
+.field { display: grid; gap: 4px; color: var(--muted); }
+select { width: 100%; background: #0d141c; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px; font: inherit; }
+.seg { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { flex: 1; background: transparent; color: var(--muted); border: 0; padding: 7px 4px; font: inherit; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: rgba(159, 231, 255, .16); color: var(--text); }
+.slider { display: grid; grid-template-columns: 1fr 44px; align-items: center; gap: 2px 6px; margin-top: 10px; color: var(--muted); }
+.slider input { grid-column: 1 / -1; grid-row: 2; width: 100%; accent-color: var(--accent); }
+.slider output { grid-column: 2; grid-row: 1; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.check { display: flex; gap: 6px; align-items: center; margin-top: 10px; color: var(--muted); }
+.check input { accent-color: var(--accent); }
+.hint { color: var(--muted); font-size: 11.5px; margin: 12px 0 0; }
+.hint b { color: var(--text); font-weight: 600; }
+
+@media (max-width: 560px) {
+  .panel { top: auto; bottom: 56px; right: 12px; left: 12px; width: auto; max-height: 55vh; }
+  .panel-btn { top: 12px; }
+}

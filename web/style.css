@@ -99,3 +99,4 @@ button:hover, .file:hover, .download:hover { border-color: var(--accent); }
 .dist .b i { display: block; height: 100%; background: #fb923c; }
 .dist .v { text-align: right; font-variant-numeric: tabular-nums; }
 @media (max-width: 640px) { .dist { width: min(240px, 66%); } .dist li { grid-template-columns: 1fr 40px 50px; } .dist ol { max-height: 22vh; } }
+.tab-link { color: #000; background: var(--accent); text-decoration: none; padding: 3px 10px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
