@@ -167,7 +167,8 @@ async function openScan(entry, li) {
     const [ply, meta, shapes] = await Promise.all([
       fetch(entry.ply).then((r) => { if (!r.ok) throw new Error(`${entry.ply} ${r.status}`); return r.arrayBuffer(); }),
       entry.meta ? fetch(entry.meta).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null,
-      fetch(`web_scans/${entry.id}.collision.json?t=${Date.now()}`, { cache: 'no-store' })   // ?t: past the Pages CDN cache.then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      // ?t= gets past the GitHub Pages CDN cache, so a fresh editor save shows up
+      fetch(`web_scans/${entry.id}.collision.json?t=${Date.now()}`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]);
     showCloud(ply, meta, entry.id, shapes);
     const dl = $('download'); dl.href = entry.ply; dl.download = `${entry.id}.ply`; dl.hidden = false;
