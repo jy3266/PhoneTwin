@@ -101,6 +101,22 @@ bool FPhoneTwinPacketTest::RunTest(const FString&)
 	TestTrue(TEXT("osc bytes"), Osc.Num() == sizeof(Want) && FMemory::Memcmp(Osc.GetData(), Want, sizeof(Want)) == 0);
 	TestEqual(TEXT("osc 4-byte string gets 4 zeros"), FOscMessage(TEXT("/abc")).Encode().Num(), 8 + 4);
 
+	// OSC in (UWB tag from the Pi): our own encoder round-trips, bundles unpack, bad data is refused
+	TArray<FOscIn> In;
+	const TArray<uint8> Pos = FOscMessage(TEXT("/tag/position")).Float(120.5f).Float(-40.f).Float(100.f).Encode();
+	TestTrue(TEXT("osc parse"), ParseOscPacket(Pos.GetData(), Pos.Num(), In) && In.Num() == 1);
+	if (In.Num() == 1) { TestEqual(TEXT("osc address"), In[0].Address, FString(TEXT("/tag/position"))); TestEqual(TEXT("osc nums"), In[0].Num.Num(), 3);
+		if (In[0].Num.Num() == 3) TestEqual(TEXT("osc x"), In[0].Num[0], 120.5); }
+	const TArray<uint8> Q = FOscMessage(TEXT("/tag/quality")).Float(.05f).Int(4).Str(TEXT("ok")).Int(1).Encode();
+	TArray<uint8> Bundle; Bundle.Append((const uint8*)"#bundle\0", 8); Bundle.AddZeroed(8);
+	for (const TArray<uint8>* Part : { &Pos, &Q }) { const int32 N = Part->Num(); Bundle.Add(N >> 24); Bundle.Add((N >> 16) & 255); Bundle.Add((N >> 8) & 255); Bundle.Add(N & 255); Bundle.Append(*Part); }
+	In.Reset();
+	TestTrue(TEXT("osc bundle"), ParseOscPacket(Bundle.GetData(), Bundle.Num(), In) && In.Num() == 2);
+	if (In.Num() == 2) { TestEqual(TEXT("bundle nums"), In[1].Num.Num(), 3); TestEqual(TEXT("bundle str"), In[1].Str.Num(), 1); }
+	In.Reset();
+	TestFalse(TEXT("osc truncated"), ParseOscPacket(Pos.GetData(), Pos.Num() - 2, In));
+	TestFalse(TEXT("osc not osc"), ParseOscPacket((const uint8*)"PTE1,1,1", 8, In));
+
 	FScanMeta M;
 	TestTrue(TEXT("meta"), ParseMeta(TEXT("{\"id\":\"s1\",\"a\":[0,0,0],\"b\":[2,0,0],\"objects\":[{\"id\":3,\"name\":\"사물 3\",\"c\":[1,1,1],\"r\":0.2}],\"ai\":[{\"label\":\"chair\",\"name\":\"의자\",\"c\":[0,0.4,1],\"r\":0.35}]}"), M));
 	TestTrue(TEXT("meta ab"), M.bHasAB);

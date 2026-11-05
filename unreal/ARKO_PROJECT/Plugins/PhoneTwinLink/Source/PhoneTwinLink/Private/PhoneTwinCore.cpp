@@ -418,4 +418,62 @@ TArray<uint8> FOscMessage::Encode() const
 	B.Append(Args);
 	return B;
 }
+
+static uint32 OscRead32(const uint8* P) { return ((uint32)P[0] << 24) | ((uint32)P[1] << 16) | ((uint32)P[2] << 8) | P[3]; }
+static bool OscReadString(const uint8* D, int32 Len, int32& Pos, FString& Out)
+{
+	int32 End = Pos;
+	while (End < Len && D[End]) End++;
+	if (End >= Len) return false;
+	Out = FString(FUTF8ToTCHAR((const ANSICHAR*)D + Pos, End - Pos));
+	Pos = (End + 4) & ~3;   // skip the terminator and padding
+	return Pos <= Len;
+}
+
+static bool ParseOscAt(const uint8* D, int32 Len, TArray<FOscIn>& Out, int32 Depth)
+{
+	if (Len < 4 || Depth > 4) return false;
+	if (Len >= 16 && FMemory::Memcmp(D, "#bundle\0", 8) == 0)
+	{
+		int32 Pos = 16;   // "#bundle\0" + 8-byte time tag
+		while (Pos + 4 <= Len)
+		{
+			const int32 Size = (int32)OscRead32(D + Pos); Pos += 4;
+			if (Size <= 0 || Pos + Size > Len || !ParseOscAt(D + Pos, Size, Out, Depth + 1)) return false;
+			Pos += Size;
+		}
+		return true;
+	}
+	if (D[0] != '/') return false;
+	FOscIn M; int32 Pos = 0; FString Tags;
+	if (!OscReadString(D, Len, Pos, M.Address)) return false;
+	if (Pos >= Len) { Out.Add(MoveTemp(M)); return true; }   // no type tag string: no arguments
+	if (!OscReadString(D, Len, Pos, Tags) || !Tags.StartsWith(TEXT(","))) return false;
+	for (int32 i = 1; i < Tags.Len(); i++)
+	{
+		const TCHAR T = Tags[i];
+		if (T == 'i' || T == 'f')
+		{
+			if (Pos + 4 > Len) return false;
+			const uint32 U = OscRead32(D + Pos); Pos += 4;
+			if (T == 'i') M.Num.Add((double)(int32)U); else { float F; FMemory::Memcpy(&F, &U, 4); M.Num.Add(F); }
+		}
+		else if (T == 'd' || T == 'h' || T == 't')
+		{
+			if (Pos + 8 > Len) return false;
+			const uint64 U = ((uint64)OscRead32(D + Pos) << 32) | OscRead32(D + Pos + 4); Pos += 8;
+			if (T == 'd') { double F; FMemory::Memcpy(&F, &U, 8); M.Num.Add(F); } else if (T == 'h') M.Num.Add((double)(int64)U);
+		}
+		else if (T == 's' || T == 'S') { FString S; if (!OscReadString(D, Len, Pos, S)) return false; M.Str.Add(S); }
+		else if (T == 'T') M.Num.Add(1.0);
+		else if (T == 'F') M.Num.Add(0.0);
+		else if (T == 'b') { if (Pos + 4 > Len) return false; Pos += 4 + ((OscRead32(D + Pos) + 3) & ~3u); if (Pos > Len) return false; }
+		else if (T == 'N' || T == 'I') {}
+		else return false;   // unknown type: sizes unknown, stop
+	}
+	Out.Add(MoveTemp(M));
+	return true;
+}
+
+bool ParseOscPacket(const uint8* Data, int32 Len, TArray<FOscIn>& Out) { return Data && ParseOscAt(Data, Len, Out, 0); }
 }

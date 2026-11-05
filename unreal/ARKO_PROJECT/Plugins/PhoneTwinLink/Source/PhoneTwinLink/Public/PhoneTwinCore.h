@@ -115,6 +115,11 @@ namespace PhoneTwin
 		TArray<uint8> Args;
 	};
 
+	/** One received OSC message: numbers (i, f, d, h, T/F as 1/0) in order, strings separately. */
+	struct FOscIn { FString Address; TArray<double> Num; TArray<FString> Str; };
+	/** Parses an OSC 1.0 datagram (a message or a #bundle, nested bundles too). Returns false on malformed data. */
+	PHONETWINLINK_API bool ParseOscPacket(const uint8* Data, int32 Len, TArray<FOscIn>& Out);
+
 	/** Same curve as the phone app: 0 at Range, 1 at Contact (and closer). */
 	inline float Intensity(double Dist, double Range, double Contact)
 	{

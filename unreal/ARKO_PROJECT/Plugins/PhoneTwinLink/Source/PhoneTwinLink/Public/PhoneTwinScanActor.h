@@ -27,7 +27,7 @@ UENUM(BlueprintType)
 enum class EPhoneTwinSource : uint8
 {
 	Phone UMETA(DisplayName = "휴대폰 (ARCore)"),
-	Esp32 UMETA(DisplayName = "ESP32 (UWB + IMU)")
+	Esp32 UMETA(DisplayName = "UWB tag (Pi OSC / ESP32)")
 };
 
 UENUM(BlueprintType)
@@ -51,6 +51,11 @@ public:
 	/** Scan to show (file name without .ply in <Project>/PhoneTwinScans). Empty = always the newest. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Scan")
 	FString ScanId;
+
+	/** Open the scan last saved in the collision editor (콜리전_편집기, collisions/last_saved.txt) instead of the newest,
+	 *  and switch to whichever scan the editor saves while playing. Off, or -PhoneTwinScan=<id>, keeps ScanId. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Scan")
+	bool bFollowEditorScan = true;
 
 	/** Download new scans from GitHub at start and every SyncIntervalSeconds (Project Settings > Phone Twin). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Scan")
@@ -125,7 +130,23 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input")
 	int32 ListenPort = 7777;
 
-	/** ESP32 address for vibration. Empty = learn it from its PTE1 packets. */
+	/** Receive the UWB tag position from the Raspberry Pi gateway as OSC (/tag/position x y z in cm, room frame R;
+	 *  /tag/heading yaw deg; /tag/quality residual anchors valid). Counts as input [2]. See pi/phonetwin_gateway.py. */
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input")
+	bool bUwbOscInput = true;
+
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input", meta = (EditCondition = "bUwbOscInput"))
+	int32 UwbOscPort = 8000;
+
+	/** OSC address of the tag position (the Apeficiation gateway and ours both use /tag/position). */
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input", meta = (EditCondition = "bUwbOscInput"))
+	FString UwbOscAddress = TEXT("/tag/position");
+
+	/** Unit of the OSC position: 0.01 = centimetres (default, as the gateway sends), 1 = metres. */
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input", meta = (EditCondition = "bUwbOscInput", ClampMin = "0.0001"))
+	float UwbOscMetresPerUnit = 0.01f;
+
+	/** ESP32 / UWB gateway address for vibration. Empty = learn it from its PTE1 or OSC packets (the Pi gateway answers PTH1 on 4210). */
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input")
 	FString EspAddress;
 
@@ -388,7 +409,14 @@ private:
 	void HideOthers();
 	void ApplyLook();
 
+	FString EditorScan() const;
+	FDateTime EditorScanStamp; bool bScanFromCmdLine = false;
+	void ReceiveUwbOsc();
+	void HandleUwbOsc(const PhoneTwin::FOscIn& M, const FString& From);
+
 	FSocket* Socket = nullptr;
+	FSocket* UwbSocket = nullptr;
+	bool bEspFromOsc = false; double UwbHeadingTime = -1e9, UwbResidual = -1; int32 UwbAnchors = 0;
 	FLink Phone, Esp; double EspAckTime = -1e9;
 	PhoneTwin::FPhonePose PhonePose; PhoneTwin::FEspPose EspPose;
 	uint32 SendSeq = 0, WebSeq = 0; double SendAccum = 0, WebAccum = 0, SyncTimer = 0;

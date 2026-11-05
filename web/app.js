@@ -167,7 +167,7 @@ async function openScan(entry, li) {
     const [ply, meta, shapes] = await Promise.all([
       fetch(entry.ply).then((r) => { if (!r.ok) throw new Error(`${entry.ply} ${r.status}`); return r.arrayBuffer(); }),
       entry.meta ? fetch(entry.meta).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null,
-      fetch(`web_scans/${entry.id}.collision.json`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(`web_scans/${entry.id}.collision.json?t=${Date.now()}`, { cache: 'no-store' })   // ?t: past the Pages CDN cache.then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]);
     showCloud(ply, meta, entry.id, shapes);
     const dl = $('download'); dl.href = entry.ply; dl.download = `${entry.id}.ply`; dl.hidden = false;
@@ -192,7 +192,9 @@ async function loadIndex() {
     showEmpty('아직 업로드된 스캔이 없습니다 — 앱 설정 8번에서 업로드');
     return;
   }
-  const want = decodeURIComponent(location.hash.slice(1));
+  // the scan in the address, else the one last saved in the collision editor, else the newest
+  const edited = await fetch(`web_scans/edited.json?t=${Date.now()}`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const want = decodeURIComponent(location.hash.slice(1)) || (edited && edited.scan) || '';
   let first = null;
   for (const s of scans) {
     const li = document.createElement('li');

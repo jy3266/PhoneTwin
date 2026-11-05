@@ -21,3 +21,5 @@ ios/build/
 ios/Payload/
 ios/*.ipa
 ios/*.log
+# UWB gateway: per-room anchor positions and floor marks (see pi/anchors.example.json)
+pi/anchors.json

@@ -29,8 +29,8 @@
 
     <div class="label">보는 방식</div>
     <div class="seg" id="look">
-      <button data-v="0" class="on" title="가까운 곳만 또렷하고 먼 곳은 먼지처럼 흩어짐">기억</button>
-      <button data-v="1" title="관객에게서 빛의 고리가 퍼져 나가며 공간을 훑음">물결</button>
+      <button data-v="0" title="가까운 곳만 또렷하고 먼 곳은 먼지처럼 흩어짐">기억</button>
+      <button data-v="1" class="on" title="관객에게서 빛의 고리가 퍼져 나가며 공간을 훑음">물결</button>
       <button data-v="2" title="전체가 희미한 별빛, 지나간 자리가 오래 남음">별빛</button>
     </div>
 
@@ -46,9 +46,12 @@
     <label class="slider">흔적 유지(초) <input id="memory" type="range" min="0" max="30" step="1" value="8"><output></output></label>
     <label class="slider">점 크기 <input id="size" type="range" min="0.5" max="4" step="0.1" value="1.4"><output></output></label>
     <label class="check"><input id="bloom" type="checkbox" checked> 빛 번짐(블룸)</label>
-    <label class="check"><input id="showMe" type="checkbox" checked> 관객 빛 표시</label>
-    <p class="hint">관객 위치는 릴레이(언리얼이 보낸 위치 → 없으면 휴대폰 → ESP32)를 따릅니다. 신호가 없으면 자동으로 방 안을 천천히 걷는 시연을 보여 주고, <b>W A S D / 방향키</b>를 누르거나 바닥을 클릭하면 직접 걸어 볼 수 있습니다. <b>F</b> 전체 화면, <b>H</b> 이 창 숨기기.</p>
+    <label class="check"><input id="showMe" type="checkbox" checked> 관객을 빛 나비로 표시</label>
+    <p class="hint">관객 위치는 릴레이(언리얼이 보낸 위치 → 없으면 휴대폰 → UWB 태그)를 따릅니다. <b>시스템이 연결돼 있으면 실제 사람의 움직임만 따르고</b> 키보드·클릭 걷기는 꺼집니다(걷기 테스트 전에는 마지막 자리에서 기다림). 연결이 없으면 방 안을 천천히 걷는 시연을 보여 주고, <b>W A S D / 방향키</b>나 바닥 클릭으로 직접 걸어 볼 수 있고, <b>Q</b>는 위로, <b>E</b>는 아래로 갑니다. <b>F</b> 전체 화면, <b>H</b> 이 창 숨기기.</p>
+    <p class="hint touch-only"><b>휴대폰</b>: ✋ 버튼을 누르면 휴대폰을 든 손을 돌리고 기울이는 대로 시선이 움직입니다. 한 손가락으로 끌면 둘러보기, 두 손가락 벌리기·오므리기는 거리, 길게 누르면 보는 쪽으로 걷기(연결 없을 때), 두 번 탭하면 정면으로 되돌리기.</p>
   </aside>
+  <button id="handBtn" class="hand-btn touch-only" aria-pressed="false" title="손 움직임으로 보기">✋</button>
+  <div id="toast" class="toast"></div>
 
   <script src="web/config.js"></script>
   <script type="module" src="web/immersive.js"></script>

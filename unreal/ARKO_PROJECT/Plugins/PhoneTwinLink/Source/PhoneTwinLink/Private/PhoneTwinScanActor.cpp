@@ -134,7 +134,7 @@ public:
 						+ SHorizontalBox::Slot().FillWidth(1).Padding(0, 0, 4, 0)
 						[ Button(FText::FromString(TEXT("[1] 휴대폰 (ARCore)")), [](APhoneTwinScanActor* A) { A->SetSource(EPhoneTwinSource::Phone); }, SourceColor(EPhoneTwinSource::Phone)) ]
 						+ SHorizontalBox::Slot().FillWidth(1).Padding(4, 0, 0, 0)
-						[ Button(FText::FromString(TEXT("[2] ESP32 (UWB+IMU)")), [](APhoneTwinScanActor* A) { A->SetSource(EPhoneTwinSource::Esp32); }, SourceColor(EPhoneTwinSource::Esp32)) ]
+						[ Button(FText::FromString(TEXT("[2] UWB 태그 (Pi·OSC)")), [](APhoneTwinScanActor* A) { A->SetSource(EPhoneTwinSource::Esp32); }, SourceColor(EPhoneTwinSource::Esp32)) ]
 					]
 					+ SVerticalBox::Slot().AutoHeight().Padding(0, 4)
 					[ SNew(STextBlock).Font(Body).ColorAndOpacity(FLinearColor::White).AutoWrapText(true)
@@ -195,8 +195,10 @@ void APhoneTwinScanActor::BeginPlay()
 			VP->AddViewportWidgetContent(Hud.ToSharedRef(), 50);
 		}
 	SyncHandle = FPhoneTwinSync::Get().OnSynced.AddUObject(this, &APhoneTwinScanActor::OnSynced);
-	FParse::Value(FCommandLine::Get(), TEXT("-PhoneTwinScan="), ScanId);   // keep one scan on show, whatever is newest
+	bScanFromCmdLine = FParse::Value(FCommandLine::Get(), TEXT("-PhoneTwinScan="), ScanId);   // keep one scan on show, whatever is newest
 	bTrace = FParse::Param(FCommandLine::Get(), TEXT("PhoneTwinTrace"));   // once a second: distance and loudness in the log
+	EditorScanStamp = IFileManager::Get().GetTimeStamp(*(UPhoneTwinSettings::ScanDir() / TEXT("collisions/last_saved.txt")));
+	if (ScanId.IsEmpty() && bFollowEditorScan) ScanId = EditorScan();   // what was edited last, else the newest
 	LoadScan(ScanId);
 	if (bAutoSync) SyncNow();
 	if (bHideLevelGeometry) SetHideLevelGeometry(true);
@@ -213,6 +215,7 @@ void APhoneTwinScanActor::EndPlay(const EEndPlayReason::Type Reason)
 	Hud.Reset();
 	if (Relay.IsValid()) { Relay->OnClosed().Clear(); Relay->OnMessage().Clear(); Relay->Close(); Relay.Reset(); }
 	if (Socket) { Socket->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket); Socket = nullptr; }
+	if (UwbSocket) { UwbSocket->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(UwbSocket); UwbSocket = nullptr; }
 	SetHideLevelGeometry(false);
 	// a light frame may still be written on a worker: wait for it, then let the buffers go after its queued game-thread work
 	for (int32 i = 0; *LightWorking && i < 3000; i++) FPlatformProcess::Sleep(.001f);
@@ -229,6 +232,52 @@ void APhoneTwinScanActor::OpenSocket()
 		.BoundToAddress(FIPv4Address::Any).BoundToPort(ListenPort).WithReceiveBufferSize(1 << 16).WithSendBufferSize(1 << 16).WithBroadcast().Build();
 	if (!Socket) { UE_LOG(LogPhoneTwin, Error, TEXT("UDP %d를 열 수 없습니다 (다른 프로그램이 사용 중?)"), ListenPort); }
 	else { UE_LOG(LogPhoneTwin, Log, TEXT("UDP %d listening"), ListenPort); }
+	if (bUwbOscInput && UwbOscPort > 0 && UwbOscPort != ListenPort)
+	{
+		UwbSocket = FUdpSocketBuilder(TEXT("PhoneTwinUwbOsc")).AsNonBlocking().AsReusable()
+			.BoundToAddress(FIPv4Address::Any).BoundToPort(UwbOscPort).WithReceiveBufferSize(1 << 16).Build();
+		if (!UwbSocket) { UE_LOG(LogPhoneTwin, Error, TEXT("OSC %d (UWB 태그)를 열 수 없습니다 (다른 프로그램이 사용 중?)"), UwbOscPort); }
+		else { UE_LOG(LogPhoneTwin, Log, TEXT("OSC %d listening for the UWB tag (%s)"), UwbOscPort, *UwbOscAddress); }
+	}
+}
+
+// ------------------------------------------------------------------------------------------------ UWB tag via the Raspberry Pi (OSC)
+void APhoneTwinScanActor::ReceiveUwbOsc()
+{
+	if (!UwbSocket) return;
+	ISocketSubsystem* SS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	TSharedRef<FInternetAddr> From = SS->CreateInternetAddr();
+	uint8 Buf[2048]; int32 Read = 0; uint32 Pending = 0;
+	TArray<PhoneTwin::FOscIn> Msgs;
+	while (UwbSocket->HasPendingData(Pending) && UwbSocket->RecvFrom(Buf, sizeof(Buf), Read, *From))
+	{
+		Msgs.Reset();
+		if (!PhoneTwin::ParseOscPacket(Buf, Read, Msgs)) continue;
+		const FString Ip = From->ToString(false);
+		for (const PhoneTwin::FOscIn& M : Msgs) HandleUwbOsc(M, Ip);
+	}
+}
+
+void APhoneTwinScanActor::HandleUwbOsc(const PhoneTwin::FOscIn& M, const FString& From)
+{
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (M.Address == UwbOscAddress && M.Num.Num() >= 3)
+	{
+		const double K = UwbOscMetresPerUnit;
+		if (!FMath::IsFinite(M.Num[0]) || !FMath::IsFinite(M.Num[1]) || !FMath::IsFinite(M.Num[2])) return;
+		EspPose.X = M.Num[0] * K; EspPose.Y = M.Num[1] * K; EspPose.Z = M.Num[2] * K;
+		EspPose.Pitch = EspPose.Roll = 0;   // a UWB tag has no orientation; yaw comes from /tag/heading (walking direction)
+		EspPose.bValid = true; EspPose.Seq++;
+		Esp.LastTime = Now; Esp.Address = From; Esp.Seq = EspPose.Seq; Esp.Packets++;
+		bEspFromOsc = true;
+	}
+	else if (M.Address == TEXT("/tag/heading") && M.Num.Num() >= 1 && FMath::IsFinite(M.Num[0])) { EspPose.Yaw = M.Num[0]; UwbHeadingTime = Now; }
+	else if (M.Address == TEXT("/tag/quality") && M.Num.Num() >= 1)
+	{
+		UwbResidual = M.Num[0];
+		UwbAnchors = M.Num.Num() > 1 ? (int32)M.Num[1] : 0;
+		if (M.Num.Num() > 2 && M.Num[2] == 0) EspPose.bValid = false;
+	}
 }
 
 void APhoneTwinScanActor::Receive()
@@ -258,7 +307,7 @@ void APhoneTwinScanActor::HandleLine(const FString& L, const FString& From)
 	else if (L.StartsWith(TEXT("PTE1")))
 	{
 		PhoneTwin::FEspPose E;
-		if (PhoneTwin::ParsePTE(L, E)) { EspPose = E; Esp.LastTime = Now; Esp.Address = From; Esp.Seq = E.Seq; Esp.Packets++; }
+		if (PhoneTwin::ParsePTE(L, E)) { EspPose = E; Esp.LastTime = Now; Esp.Address = From; Esp.Seq = E.Seq; Esp.Packets++; bEspFromOsc = false; }
 	}
 	else if (L.StartsWith(TEXT("PTA1"))) EspAckTime = Now;   // vibration packets reach the ESP32
 }
@@ -389,6 +438,7 @@ void APhoneTwinScanActor::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	Receive();
+	ReceiveUwbOsc();
 	TickRelay(DeltaSeconds);
 	HandleKeys();
 	UpdateTracker();
@@ -874,7 +924,7 @@ void APhoneTwinScanActor::OnSynced(bool bNewFiles, const FString& Status)
 
 FTransform APhoneTwinScanActor::GetTrackerTransform() const { return FTransform(TrackerRot, TrackerPos) * GetActorTransform(); }
 
-FString APhoneTwinScanActor::SourceText(EPhoneTwinSource S) const { return S == EPhoneTwinSource::Phone ? TEXT("휴대폰") : TEXT("ESP32"); }
+FString APhoneTwinScanActor::SourceText(EPhoneTwinSource S) const { return S == EPhoneTwinSource::Phone ? TEXT("휴대폰") : TEXT("UWB 태그"); }
 
 FString APhoneTwinScanActor::HudText() const
 {
@@ -885,7 +935,9 @@ FString APhoneTwinScanActor::HudText() const
 		return FString::Printf(TEXT("%s: %s · %s · %.0f ms 전%s"), Name, *L.Address, Age < SignalTimeout ? (bValid ? TEXT("추적 중") : TEXT("정렬/추적 대기")) : TEXT("끊김"),
 			Age * 1000.0, Age > 5 ? TEXT(" (오래됨)") : TEXT(""));
 	};
-	FString S = FString::Printf(TEXT("입력: %s\n%s\n%s"), *SourceText(Source), *Link(Phone, PhonePose.bValid, TEXT("휴대폰")), *Link(Esp, EspPose.bValid, TEXT("ESP32")));
+	FString S = FString::Printf(TEXT("입력: %s\n%s\n%s"), *SourceText(Source), *Link(Phone, PhonePose.bValid, TEXT("휴대폰")), *Link(Esp, EspPose.bValid, bEspFromOsc ? TEXT("UWB 태그 (Pi OSC)") : TEXT("UWB 태그")));
+	if (Esp.Packets == 0 && UwbSocket) S += FString::Printf(TEXT(" · OSC %d %s 대기"), UwbOscPort, *UwbOscAddress);
+	if (bEspFromOsc && UwbAnchors > 0) S += FString::Printf(TEXT(" · 앵커 %d개 · 오차 %.0f cm"), UwbAnchors, UwbResidual * 100.0);
 	if (Now - EspAckTime < 1.5) S += TEXT(" · 진동 응답 OK");
 	if (!RelayStatus.IsEmpty())
 	{
@@ -912,6 +964,15 @@ FString APhoneTwinScanActor::HudText() const
 }
 
 // ------------------------------------------------------------------------------------------------ scans
+FString APhoneTwinScanActor::EditorScan() const
+{
+	FString Id;
+	if (!FFileHelper::LoadFileToString(Id, *(UPhoneTwinSettings::ScanDir() / TEXT("collisions/last_saved.txt")))) return FString();
+	Id.TrimStartAndEndInline();
+	const TArray<FPhoneTwinLocalScan> L = FPhoneTwinSync::LocalScans();
+	return L.ContainsByPredicate([&Id](const FPhoneTwinLocalScan& S) { return S.Id == Id; }) ? Id : FString();
+}
+
 void APhoneTwinScanActor::LoadNextScan()
 {
 	const TArray<FPhoneTwinLocalScan> L = FPhoneTwinSync::LocalScans();
@@ -1012,9 +1073,25 @@ void APhoneTwinScanActor::RebuildObjects()
 
 void APhoneTwinScanActor::TickCollisionFile(float DeltaSeconds)
 {
-	// the editor's Save reaches a running game within a second
-	if (LoadedScanId.IsEmpty() || (CollisionTimer += DeltaSeconds) < 1.0) return;
+	// the editor's Save reaches a running game within a second — and if it saved another scan, that scan opens
+	if ((CollisionTimer += DeltaSeconds) < 1.0) return;
 	CollisionTimer = 0;
+	if (bFollowEditorScan && !bScanFromCmdLine)
+	{
+		const FDateTime Stamp = IFileManager::Get().GetTimeStamp(*(UPhoneTwinSettings::ScanDir() / TEXT("collisions/last_saved.txt")));
+		if (Stamp != EditorScanStamp)
+		{
+			EditorScanStamp = Stamp;
+			const FString Id = EditorScan();
+			if (!Id.IsEmpty() && Id != LoadedScanId)
+			{
+				UE_LOG(LogPhoneTwin, Log, TEXT("collision editor saved %s: switching to it"), *Id);
+				ScanId = Id; LoadScan(Id);
+				return;
+			}
+		}
+	}
+	if (LoadedScanId.IsEmpty()) return;
 	if (bTrace && bTracking)
 		for (int32 i = 0; i < Objects.Num() && i < Sounds.Num(); i++)
 			UE_LOG(LogPhoneTwin, Log, TEXT("trace %s: floor %.1f cm, hand %.1f cm, gain %.3f, near %s"), *Objects[i].Name, Objects[i].FloorD, Objects[i].HandD, Sounds[i].Gain,

@@ -19,6 +19,12 @@ export function saveCollisions(id, data) {
   writeIfChanged(path.join(WEB_SCANS, `${id}.collision.json`), text);   // what the web viewer shows
 }
 
+/** The scan last saved in the editor: Unreal (collisions/last_saved.txt) and the web viewer (web_scans/edited.json) open it first. */
+export function markEdited(id) {
+  fs.writeFileSync(path.join(COLLISIONS, 'last_saved.txt'), id);
+  writeIfChanged(path.join(WEB_SCANS, 'edited.json'), JSON.stringify({ scan: id }));
+}
+
 export function makeFor(id) {
   const buf = fs.readFileSync(path.join(UNREAL_SCANS, `${id}.ply`));
   let meta = null;

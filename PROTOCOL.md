@@ -19,10 +19,24 @@ GitHub는 신호 통신에 쓰지 않습니다. 실시간 신호는 전부 LAN U
 | 받는 쪽 | 포트 | 받는 패킷 |
 |---|---|---|
 | 언리얼 PC | 7777 | `PTP1`(휴대폰 위치), `PTE1`(ESP32 위치) |
-| ESP32 | 4210 | `PTH1`(햅틱) |
+| 언리얼 PC | 8000 | OSC `/tag/position` 등 (라즈베리파이 UWB 게이트웨이, 아래 1-1) |
+| ESP32 / 라즈베리파이 | 4210 | `PTH1`(햅틱) → `PTA1` 응답 |
 | 휴대폰 앱 | 4211 | `PTH1`(언리얼이 계산한 햅틱) |
 
 모든 패킷은 ASCII 한 줄, 쉼표 구분, `\n`으로 끝납니다. 소수는 `.`을 씁니다. 약 30Hz로 보냅니다.
+
+### 1-1. UWB 태그 → 라즈베리파이 → 언리얼 (OSC)
+
+앵커 4개(USB) → `pi/phonetwin_gateway.py`가 위치 계산 → 언리얼 UDP 8000 (OSC 1.0, 메시지 또는 번들, 최대 30Hz). 하드웨어·설치는 `arduino/README.md`.
+
+| 주소 | 인자 | 뜻 |
+|---|---|---|
+| `/tag/position` | f x, f y, f z (cm) | 태그 위치. 바닥 표시 A·B를 `--mark`로 기록했으면 방 좌표 R(A=원점, A→B=+X, +Y=왼쪽, Z=바닥에서 높이), 아니면 앵커 좌표 그대로 |
+| `/tag/heading` | f yaw (도) | 걷는 방향(+X에서 반시계). 0.15 m/s 이상 움직일 때만 |
+| `/tag/quality` | f 잔차(m), i 앵커 수, i valid | 계산 품질. valid=0이면 언리얼이 추적 안 함 |
+
+언리얼은 이것을 입력 [2](UWB 태그)로 받아 `PTE1`과 같은 방식(R → 언리얼 `(x, −y, z)×100`, ESP32 Frame 보정)으로 씁니다. 진동 `PTH1`은 OSC를 보낸 주소의 4210번으로 가고, 파이는 `PTA1,seq,0`으로 답한 뒤 앵커 USB에 `H,<0-255>,<닿음 0|1>\n`을 씁니다. 앵커는 그 값을 UWB 응답(POLL_ACK, 20바이트 중 [18] 세기 · [19] 닿음)에 실어 태그 모터로 보냅니다. 0.5초 넘게 새 값이 없으면 0.
+앵커 줄(USB → 파이): `R,<sweep>,<anchor 1-4>,<거리 m>,<수신 세기 dBm>`.
 
 ### PTP1 — 휴대폰 → 언리얼 (위치·방향)
 ```
@@ -156,7 +170,9 @@ TouchDesigner(`Phone_Twin_Project.toe`)가 이것을 받아 움직임 신호로 
 | `ARKO_PROJECT/PhoneTwinScans/collisions/<id>.json` | 기준 파일. 언리얼이 1초마다 바뀌었는지 확인해 실행 중에도 다시 읽음 |
 | `ARKO_PROJECT/PhoneTwinScans/collisions/history/` | 저장할 때마다 남는 이전 판 |
 | `ARKO_PROJECT/PhoneTwinScans/sounds/*.wav` | 편집기가 넣은 소리 (48 kHz 16-bit PCM, 1·2채널) |
-| `web_scans/<id>.collision.json` | 같은 내용의 사본, 웹 뷰어용 |
+| `web_scans/<id>.collision.json` | 같은 내용의 사본, 웹 뷰어용. 편집기 서버가 마지막 저장 15초 뒤 GitHub에 커밋·푸시(`--no-publish`면 안 함) |
+| `ARKO_PROJECT/PhoneTwinScans/collisions/last_saved.txt` | 마지막으로 저장한 스캔 id. 언리얼은 시작할 때 이 스캔을 열고(`-PhoneTwinScan=`이 없으면), 실행 중 바뀌면 그 스캔으로 전환 (`bFollowEditorScan`) |
+| `web_scans/edited.json` | `{"scan": "<id>"}` — 웹 뷰어·편집기가 주소에 스캔이 없을 때 처음 여는 스캔 |
 
 ```json
 { "version": 1, "scan": "<id>", "voxel": 0.04,

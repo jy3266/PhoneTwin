@@ -392,7 +392,24 @@ async function save() {
   const body = JSON.stringify({ version: data.version, scan: data.scan, voxel: data.voxel, collisions: data.collisions.map(({ mesh, ...rest }) => rest) });
   const r = await fetch(`/api/collisions/${data.scan}`, { method: 'POST', body });
   if (!r.ok) { toast('저장 실패'); return; }
-  dirty = false; $('dirty').textContent = '저장됨'; toast('저장했습니다. 켜 있는 언리얼에도 1초 안에 반영됩니다');
+  dirty = false; $('dirty').textContent = '저장됨'; toast('저장했습니다. 켜 있는 언리얼은 1초 안에 이 스캔으로 바뀌어 반영됩니다');
+  watchPublish();
+}
+// upload of the saved file to GitHub (the public web viewer), done by the editor server 15 s after the last save
+let publishWatch = 0;
+function watchPublish() {
+  clearInterval(publishWatch);
+  const started = Date.now();
+  publishWatch = setInterval(async () => {
+    let p = null;
+    try { p = await (await fetch('/api/publish', { cache: 'no-store' })).json(); } catch { return; }
+    if (dirty) return;
+    $('dirty').textContent = p.text ? `저장됨 · ${p.text}` : '저장됨';
+    if (p.state === 'done' || p.state === 'error' || p.state === 'off' || Date.now() - started > 180000) {
+      clearInterval(publishWatch);
+      if (p.state === 'done' || p.state === 'error') toast(p.text);
+    }
+  }, 1000);
 }
 $('save').onclick = save; $('undo').onclick = undo;
 addEventListener('keydown', (e) => {
@@ -416,7 +433,8 @@ resize(); setTool('orbit');
   await loadSoundList();
   const index = await (await fetch('web_scans/index.json', { cache: 'no-store' })).json();
   for (const s of index.scans) $('scan').add(new Option(`${s.id} (${(s.points || 0).toLocaleString('ko-KR')}점)`, s.id));
-  const want = decodeURIComponent(location.hash.slice(1));
+  const edited = await fetch('web_scans/edited.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const want = decodeURIComponent(location.hash.slice(1)) || edited?.scan;   // else the scan saved last
   if (index.scans.some((s) => s.id === want)) $('scan').value = want;
   $('scan').onchange = () => openScan($('scan').value).catch((e) => { $('empty').textContent = e.message; $('empty').hidden = false; });
   openScan($('scan').value).catch((e) => { $('empty').textContent = e.message; $('empty').hidden = false; });
