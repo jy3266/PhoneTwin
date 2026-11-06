@@ -2,7 +2,8 @@
 // Start: 콜리전_편집기.bat, or node tools/editor_server.mjs [--no-open]
 // On start it backs up new scans, refreshes Unreal's copies and the web clones, and makes missing collision files.
 // Saves go to ARKO_PROJECT/PhoneTwinScans/collisions (Unreal reloads them and switches to that scan while playing) and
-// web_scans (the web viewer); 15 s after the last save the web_scans files are committed and pushed to GitHub (Pages).
+// web_scans (the web viewer); 15 s after the last save the web_scans files — and the sounds they use, copied to
+// web_scans/sounds for the phone app — are committed and pushed to GitHub (Pages).
 // --no-publish keeps saves on this PC.
 import { exec, execFile } from 'node:child_process';
 import fs from 'node:fs';
@@ -11,6 +12,7 @@ import path from 'node:path';
 import { REPO, COLLISIONS, SOUNDS, UNREAL_SCANS, writeIfChanged } from './scan_lib.mjs';
 import { archive, refreshUnrealCopies, verify } from './archive_scans.mjs';
 import { makeWebCopies } from './make_web_copies.mjs';
+import { copyScanSounds } from './web_sounds.mjs';
 import { makeFor, makeMissing, markEdited, saveCollisions } from './make_collisions.mjs';
 
 const PORT = 8765;
@@ -32,9 +34,12 @@ function schedulePublish(id) {
 async function doPublish() {
   if (publish.state === 'running') { publish.timer = setTimeout(doPublish, 3000); return; }
   const ids = [...publish.pending]; publish.pending.clear();
-  const files = [...ids.map((id) => `web_scans/${id}.collision.json`), 'web_scans/edited.json'];
   publish.state = 'running'; publish.text = '웹 사이트(GitHub)에 올리는 중…';
   try {
+    // the phone app downloads the sounds a collision file names from web_scans/sounds
+    const sounds = copyScanSounds(ids);
+    if (sounds.missing.length) console.warn(`  ⚠ sounds 폴더에 없는 소리: ${sounds.missing.join(', ')}`);
+    const files = [...ids.map((id) => `web_scans/${id}.collision.json`), 'web_scans/edited.json', ...sounds.files];
     await run(['add', '--', ...files]);
     const staged = (await run(['diff', '--cached', '--name-only', '--', ...files])).trim();
     if (staged) await run(['commit', '-m', `Edited collisions: ${ids.join(', ')}`, '--', ...files]);

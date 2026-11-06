@@ -97,6 +97,17 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
     private volatile int obstacleGen = 0;
     private volatile float walkRange = .6f, lookAhead = 1.5f, bodyHalf = .25f, walkContact = .2f, obstacleTop = 1.9f;
     private volatile float hudNear = Float.POSITIVE_INFINITY, hudAhead = Float.POSITIVE_INFINITY; private volatile boolean hudDeadEnd = false;
+    private volatile boolean guideOn = false;               // the old wall/obstacle guidance vibration while walking (off: objects only, like Unreal)
+
+    // ---- the twin: collision shapes + sounds exactly as in Unreal (Collisions, CalmSynth, TwinAudio)
+    private volatile Collisions twin;                      // shapes of the loaded scan (the editor's file, else the meta's spheres)
+    private volatile List<TwinAudio.Voice> twinVoices = Collections.emptyList();
+    private TwinAudio.Voice surfaceVoice; private final Collisions.Toucher surfaceToucher = new Collisions.Toucher();
+    private Collisions.Toucher[] touchers = new Collisions.Toucher[0];
+    private TwinAudio twinAudio;
+    private File colFile, colSoundDir;
+    private volatile String twinStatus = "콜리전 없음", soundNow = ""; private volatile int touchedObj = -1; private volatile long touchedAt = 0;
+    private TextView twinInfo;
 
     // ---- AI object recognition + object sounds
     private final AiObjects ai = new AiObjects();
@@ -208,6 +219,9 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         detector = new Detector(this, this::onDetections); sound = new SpatialSound();
         soundDir = new File(getFilesDir(), "sounds"); soundDir.mkdirs(); beaconFile = new File(getFilesDir(), "builtin_beacon.wav");
         new Thread(() -> { try { if (!beaconFile.exists()) SpatialSound.writeBeacon(beaconFile); } catch (IOException ignored) {} rebuildSoundFiles(); }, "beacon").start();
+        twinAudio = new TwinAudio();
+        colFile = new File(getFilesDir(), "scan_collisions.json"); colSoundDir = new File(getFilesDir(), "collision_sounds"); colSoundDir.mkdirs();
+        surfaceVoice = TwinAudio.make("surface", null, null, 1f);
 
         FrameLayout root = new FrameLayout(this); setContentView(root);
         surface = new GLSurfaceView(this); surface.setEGLContextClientVersion(2); surface.setPreserveEGLContextOnPause(true);
@@ -278,8 +292,10 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         upAxis = button("", v -> toggleUpAxis());
         panel.addView(row(button("스캔 파일 열기 (PLY/OBJ/XYZ)", v -> openScan()), upAxis));
         panel.addView(row(button("☁ GitHub에 올린 스캔 불러오기…", v -> chooseGitHubScan())));
+        panel.addView(row(button("☁ 콜리전·소리 새로 받기 (편집기에서 고친 것)", v -> refreshCollisions())));
         panel.addView(row(button("현재 스캔 내보내기 (PLY 저장·공유)", v -> exportScan())));
         scanInfo = label("스캔 없음", 12); panel.addView(scanInfo);
+        twinInfo = label("", 12); panel.addView(twinInfo);
 
         // 2. alignment
         panel.addView(section("2 · 정렬: 바닥의 두 점 A·B"));
@@ -293,26 +309,27 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
 
         // 3. walking test
         panel.addView(section("3 · 걷기 테스트 (스캔한 공간을 들고 걸어 보기)"));
+        panel.addView(label("걷기 테스트는 새로 스캔하지 않습니다. 불러온 스캔을 현장 A·B로 이 공간에 겹쳐 두고, 콜리전(편집기에서 만든 사물 모양)에 다가가면 언리얼과 같은 소리가 커지고, 바닥 기준 35cm 안으로 닿으면 닿음 소리와 진동이 납니다. 휴대폰이 사물·벽 표면 30cm 안으로 가까워져도 진동합니다(5번 설정).", 11));
+        guideOn = prefs.getBoolean("walkguide", false);
+        panel.addView(check("벽·장애물 안내 진동도 사용 (예전 걷기 방식: 앞이 막히면 톡톡)", guideOn, s -> { guideOn = s; prefs.edit().putBoolean("walkguide", s).apply(); }));
         panel.addView(number("주변 경고 거리 (m)", "walkrange", .6f, .1f, 3f, v -> walkRange = v));
         panel.addView(number("앞 막힘 감지 거리 (m)", "lookahead", 1.5f, .3f, 5f, v -> lookAhead = v));
         panel.addView(number("몸 폭의 절반 (m)", "bodyhalf", .25f, .05f, 1f, v -> bodyHalf = v));
         panel.addView(number("걷기 접촉 판정 거리 (m)", "walkcontact", .2f, 0f, 1f, v -> walkContact = v));
         panel.addView(number("장애물로 볼 최대 높이 (m)", "obstop", 1.9f, .3f, 4f, v -> { obstacleTop = v; rebuildObstacles(); }));
-        panel.addView(label("위쪽 '걷기 테스트 시작'을 누르고 휴대폰을 들고 걸으세요. 바닥 위 12cm~최대 높이 사이의 스캔 점을 장애물로 봅니다. 주변에 벽·사물이 가까우면 연속 진동, 앞이 막혀 있으면 가까워질수록 빨라지는 톡톡 진동이 옵니다.", 11));
+        panel.addView(label("위 숫자들은 '벽·장애물 안내 진동'을 켰을 때만 씁니다. 바닥 위 12cm~최대 높이 사이의 스캔 점을 장애물로 보고, 주변이 가까우면 연속 진동, 앞이 막혀 있으면 빨라지는 톡톡 진동이 옵니다.", 11));
 
         // 4. AI objects + sounds
         panel.addView(section("4 · AI 사물 인식과 소리"));
         aiOn = prefs.getBoolean("ai", true); aiSkipPerson = prefs.getBoolean("aiperson", true); soundOn = prefs.getBoolean("aisound", true);
-        panel.addView(check("AI 사물 인식 (스캔 중·걷기 테스트 중 자동)", aiOn, s -> { aiOn = s; prefs.edit().putBoolean("ai", s).apply(); }));
+        panel.addView(check("AI 사물 인식 (스캔하는 동안만 · 걷기 테스트 중에는 하지 않음)", aiOn, s -> { aiOn = s; prefs.edit().putBoolean("ai", s).apply(); }));
         panel.addView(check("사람은 인식하지 않음 (관객 제외)", aiSkipPerson, s -> { aiSkipPerson = s; prefs.edit().putBoolean("aiperson", s).apply(); }));
-        panel.addView(check("사물에 가까워지면 소리 재생", soundOn, s -> { soundOn = s; prefs.edit().putBoolean("aisound", s).apply(); }));
-        panel.addView(number("소리가 들리기 시작하는 거리 (m)", "soundrange", 4f, .5f, 15f, v -> soundRange = v));
+        panel.addView(check("걷기 테스트 중 사물 소리 (언리얼과 같은 소리)", soundOn, s -> { soundOn = s; prefs.edit().putBoolean("aisound", s).apply(); }));
         panel.addView(number("인식 최소 신뢰도 (0~1)", "aiscore", .5f, .2f, .95f, v -> detector.minScore = v));
         aiInfo = label("", 12); panel.addView(aiInfo);
         aiList = new LinearLayout(this); aiList.setOrientation(LinearLayout.VERTICAL); panel.addView(aiList);
-        panel.addView(row(button("다른 사물에 소리 지정…", v -> chooseLabelForSound()), button("기본 소리 지정", v -> pickSound("default"))));
         panel.addView(row(button("AI 사물 전체 삭제", v -> { ai.clear(); refreshAi(); saveScanData(); refreshPanel(); })));
-        panel.addView(label("소리 파일은 mp3·wav·ogg·m4a 모두 됩니다. 반복 재생되니 짧은 루프가 좋습니다. 소리를 지정하지 않은 사물은 '기본 소리'를 내고, 기본 소리도 없으면 내장 신호음을 냅니다. 이어폰을 쓰면 왼쪽·오른쪽 방향도 들립니다.", 11));
+        panel.addView(label("소리는 언리얼과 같습니다: 콜리전 편집기에서 사물마다 넣은 소리(다가감 반복·닿음 1회)를 쓰고, 소리를 넣지 않은 사물은 언리얼의 내장 차분한 소리(사물 종류별 패드와 종)를 냅니다. 거리 4m부터 들리고 50cm 안에서 가장 크며, 등진 사물은 30%까지 작아집니다. 편집기에서 소리를 바꿨으면 1번의 '콜리전·소리 새로 받기'를 누르세요.", 11));
 
         // 3. objects + reaction
         panel.addView(section("5 · 손 터치 반응과 직접 놓는 사물"));
@@ -388,7 +405,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         if (new File(getFilesDir(), "scan_current").exists()) loadScan(); else refreshPanel();
     }
 
-    @Override protected void onResume() { super.onResume(); feedback.setPaused(false); sound.setPaused(false); startAR(); }
+    @Override protected void onResume() { super.onResume(); feedback.setPaused(false); sound.setPaused(false); twinAudio.setPaused(false); startAR(); }
     private void startAR() {
         if (resumed) return;
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) { requestPermissions(new String[]{Manifest.permission.CAMERA}, 10); return; }
@@ -464,13 +481,13 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         else { status.setText("위치 추적에 카메라 권한이 필요합니다 (스캔 보기만 가능)"); surface.onResume(); resumed = true; }
     }
     @Override protected void onPause() {
-        feedback.setPaused(true); sound.setPaused(true);
+        feedback.setPaused(true); sound.setPaused(true); twinAudio.setPaused(true);
         if (resumed) { surface.onPause(); if (session != null) session.pause(); resumed = false; }
         sender.send(packet(false, "APP_PAUSED", lastPosition, new float[]{1, 0, 0}, new float[]{0, 0, 1}));
         super.onPause();
     }
     @Override protected void onDestroy() {
-        feedback.shutdown(); sender.shutdown(); detector.shutdown(); sound.shutdown(); unreal.stop();
+        feedback.shutdown(); sender.shutdown(); detector.shutdown(); sound.shutdown(); twinAudio.shutdown(); unreal.stop();
         if (origin != null) origin.detach(); if (session != null) session.close();
         super.onDestroy();
     }
@@ -638,11 +655,93 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
                     .putString("scan_data", scanData.toString()).apply();
                 loadScanData();
                 boolean ab; synchronized (data) { ab = scanA != null && scanB != null; }
-                ghStatus = "GitHub 스캔을 불러왔습니다: " + e.id + (ab ? "\n스캔 A·B 포함 · 2번에서 이 장소의 현장 A·B를 기록하면 겹쳐 비교할 수 있습니다" : "\n스캔 A·B 없음 · 3인칭 지도에서 스캔 A·B를 먼저 탭하세요");
+                String col = fetchCollisions(gh, e.id);
+                ghStatus = "GitHub 스캔을 불러왔습니다: " + e.id + "\n" + col + (ab ? "\n스캔 A·B 포함 · 2번에서 이 장소의 현장 A·B를 기록하면 겹쳐 비교할 수 있습니다" : "\n스캔 A·B 없음 · 3인칭 지도에서 스캔 A·B를 먼저 탭하세요");
                 saveScanData(); loadScan();
                 runOnUiThread(this::refreshPanel);
             } catch (Exception ex) { tmp.delete(); ghStatus = "불러오기 실패: " + ex.getMessage(); toastNote(ghStatus); }
         }, "github-download").start();
+    }
+
+    // ---------------------------------------------------------------------------------- collisions + sounds from the editor (any thread)
+    /**
+     * Downloads web_scans/&lt;id&gt;.collision.json and the sound files it names (only new or changed ones: their git blob
+     * sha is compared with the copy on the phone). Returns a one-line status.
+     */
+    private String fetchCollisions(GitHubScans gh, String id) {
+        try {
+            String json = gh.collisionJson(id);
+            if (json == null) { colFile.delete(); return "콜리전 파일 없음 → 스캔의 사물(구 모양)과 내장 소리 사용"; }
+            Collisions c = Collisions.parse(json);
+            Set<String> names = new TreeSet<>();
+            for (Collisions.Shape s : c.shapes) for (String n : new String[]{s.nearSound, s.touchSound}) if (!n.isEmpty() && !n.startsWith("/")) names.add(new File(n).getName());
+            int got = 0, missing = 0;
+            if (!names.isEmpty()) {
+                Map<String, String> remote = gh.soundShas();
+                for (String n : names) {
+                    String sha = remote.get(n); File f = new File(colSoundDir, n);
+                    if (sha == null) { missing++; continue; }
+                    if (f.exists() && sha.equals(GitHubScans.blobSha(f))) continue;
+                    gh.downloadSound(n, f); got++;
+                    ghStatus = "소리 받는 중 " + got + " · " + n; runOnUiThread(this::refreshPanel);
+                }
+            }
+            try (OutputStream o = new FileOutputStream(colFile)) { o.write(json.getBytes("UTF-8")); }
+            return String.format(Locale.US, "콜리전 %d개 · 소리 파일 %d개%s%s", c.shapes.size(), names.size() - missing,
+                got > 0 ? " (새로 받음 " + got + ")" : "", missing > 0 ? " · GitHub에 없는 소리 " + missing + "개 → 내장 소리" : "");
+        } catch (Exception e) { return "콜리전 받기 실패: " + e.getMessage() + " (이전 파일이 있으면 그대로 씀)"; }
+    }
+    /** Button: get the editor's latest collisions and sounds for the open scan without downloading the scan again. */
+    private void refreshCollisions() {
+        if (cloud == null) { toastNote("먼저 스캔을 여세요"); return; }
+        final GitHubScans gh = gitHubScans(); final String id = currentScanId();
+        ghStatus = "콜리전·소리 받는 중: " + id; toastNote(ghStatus);
+        new Thread(() -> { ghStatus = fetchCollisions(gh, id); buildTwin(); toastNote(ghStatus); }, "github-collisions").start();
+    }
+    /**
+     * Shapes and voices of the loaded scan, like Unreal's RebuildObjects: the editor's collision file when it belongs to
+     * this scan, otherwise the scan's placed objects and AI objects as spheres. Any thread.
+     */
+    private void buildTwin() {
+        String id = currentScanId(); Collisions c = null;
+        try {
+            if (colFile.exists()) {
+                byte[] b = new byte[(int)colFile.length()];
+                try (InputStream in = new FileInputStream(colFile)) { int off = 0; for (int k; off < b.length && (k = in.read(b, off, b.length - off)) > 0; ) off += k; }
+                Collisions f = Collisions.parse(new String(b, "UTF-8"));
+                if (f.scan.isEmpty() || f.scan.equals(id)) c = f;
+            }
+        } catch (Exception ignored) {}
+        if (c == null) {
+            List<Collisions.Shape> s = new ArrayList<>();
+            synchronized (data) { for (Obj o : objects) s.add(Collisions.sphere(o.id, o.name, o.name, false, o.x, o.y, o.z, o.r)); }
+            List<AiObjects.Item> items = aiCache;
+            for (int i = 0; i < items.size(); i++) { AiObjects.Item it = items.get(i); s.add(Collisions.sphere(100 + i, it.label, AiObjects.korean(it.label), true, it.x, it.y, it.z, it.r)); }
+            c = new Collisions(s, false, id);
+        }
+        List<TwinAudio.Voice> vs = new ArrayList<>(); int files = 0, bad = 0;
+        for (Collisions.Shape s : c.shapes) {
+            short[] near = wav(s.nearSound), touch = wav(s.touchSound);
+            if (!s.nearSound.isEmpty() && near == null || !s.touchSound.isEmpty() && touch == null) bad++;
+            if (near != null || touch != null) files++;
+            vs.add(TwinAudio.make(s.label, near, touch, s.volume));
+        }
+        Collisions.Toucher[] t = new Collisions.Toucher[c.shapes.size()]; for (int i = 0; i < t.length; i++) t[i] = new Collisions.Toucher();
+        synchronized (twinLock) { twin = c; twinVoices = vs; touchers = t; }
+        List<TwinAudio.Voice> all = new ArrayList<>(vs); all.add(surfaceVoice); twinAudio.setVoices(all);
+        twinStatus = c.fromFile ? String.format(Locale.US, "콜리전(편집기) %d개 · 편집기 소리 %d개 · 나머지는 언리얼 내장 소리%s", c.shapes.size(), files, bad > 0 ? " · 휴대폰에 없는 소리 " + bad + "개('콜리전·소리 새로 받기')" : "")
+            : c.shapes.isEmpty() ? "콜리전 없음 · 사물이 없어 벽·표면 소리만 납니다 (편집기에서 콜리전을 만들고 '콜리전·소리 새로 받기')"
+            : "콜리전 파일 없음 · 스캔 사물 " + c.shapes.size() + "개를 구 모양으로 사용";
+        runOnUiThread(this::refreshPanel);
+    }
+    private final Object twinLock = new Object();
+    private short[] wav(String ref) {
+        if (ref == null || ref.isEmpty() || ref.startsWith("/")) return null;   // "/Game/…" = an Unreal asset: the phone uses the calm voice instead
+        File f = new File(colSoundDir, new File(ref).getName()); if (!f.exists()) return null;
+        try (InputStream in = new FileInputStream(f)) {
+            byte[] b = new byte[(int)f.length()]; int off = 0; for (int k; off < b.length && (k = in.read(b, off, b.length - off)) > 0; ) off += k;
+            return TwinAudio.readWav(b);
+        } catch (Exception e) { return null; }
     }
 
     private void exportScan() {
@@ -708,6 +807,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         aiInfo.setText(detector.status + (detector.lastSeen.isEmpty() ? "" : "\n방금 본 것: " + detector.lastSeen) + (sound.status.isEmpty() ? "" : "\n" + sound.status));
         refreshAiList();
         camInfo.setText(camText.isEmpty() ? "카메라 정보는 AR이 시작되면 표시됩니다" : camText);
+        twinInfo.setText(twinStatus);
         ghInfo.setText(ghStatus); unrealInfo.setText(unreal.status + (feedback.remoteActive() ? "\n지금 언리얼이 계산한 진동을 쓰는 중" : ""));
         espInfo.setText(feedback.espStatus + (feedback.hasVibrator() ? "" : "\n이 휴대폰은 진동 모터가 없습니다") + (feedback.hasAmplitude() ? "" : "\n진동 세기 조절 미지원 기기: 진동 길이로 표현"));
     }
@@ -752,6 +852,15 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
                 ScanLoader.Cloud c = ScanLoader.load(new File(getFilesDir(), "scan_current"), prefs.getString("scan_ext", "ply"), zUp);
                 SurfaceIndex idx = SurfaceIndex.build(c.xyz, c.n, .03f, c.min, c.max);
                 index = idx; cloud = c; renderer.setCloud(c); obstacles = buildObstacles(c);
+                buildTwin();
+                // a scan opened before this version had no collisions on the phone: look for the editor's file once
+                String sid = currentScanId();
+                Collisions have = twin;
+                if ((have == null || !have.fromFile) && sid.startsWith("phone_scan_") && !prefs.getBoolean("colcheck_" + sid, false)) {
+                    prefs.edit().putBoolean("colcheck_" + sid, true).apply();
+                    GitHubScans gh = new GitHubScans(prefs.getString("gh_repo", "jy3266/PhoneTwin"), prefs.getString("gh_branch", "main"), prefs.getString("gh_token", ""));
+                    ghStatus = fetchCollisions(gh, sid); buildTwin();
+                }
                 dist = Math.max(2f, c.extent()*1.1f); yaw = .8f; pitch = .7f;
                 alignDirty = true;
                 boolean noMarks; synchronized (data) { noMarks = scanA == null || scanB == null; }
@@ -778,6 +887,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
             j.put("objects", objs); prefs.edit().putString("scan_data", j.toString()).apply();
         } catch (JSONException ignored) {}
         alignDirty = true; rebuildObstacles();
+        Collisions tw = twin; if (cloud != null && (tw == null || !tw.fromFile)) new Thread(this::buildTwin, "twin").start();
     }
     /** Scan A·B picked by the app: 1 m apart on open floor of the scan (FloorMarks). Any thread; false if the floor is too small. */
     private boolean autoScanAB(ScanLoader.Cloud c) {
@@ -930,8 +1040,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
             if (alignDirty) align();
             twin(camera, tracking);
             sendUnreal(camera);
-            if (valid && walkMode && tracking) maybeDetect(frame, camera, null);
-            updateSounds(camera);
+            // no AI recognition (and no scanning) during the walking test: the twin is the scan that was loaded
 
             int v = view;
             if (v == VIEW_ORBIT) drawOrbit();
@@ -1222,6 +1331,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
     private void twin(Camera camera, boolean tracking) {
         boolean ok = tracking && aligned && origin != null && origin.getTrackingState() != TrackingState.STOPPED;
         valid = ok;
+        if (!ok || !walkMode) silenceTwin();
         if (!ok) { feedback.update(false, 0, false, -1, Float.POSITIVE_INFINITY); hudNear = hudAhead = Float.POSITIVE_INFINITY; hudDeadEnd = false; hudDist = Float.POSITIVE_INFINITY; hudIntensity = 0; hudObj = -1; hudContact = false; activeObj = -1; nearOn = false; return; }
         origin.getPose().toMatrix(anchorM, 0);
         Matrix.multiplyMM(worldFromS, 0, anchorM, 0, mLS, 0);
@@ -1295,6 +1405,25 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
                 renderer.drawSphere(m, o.x, o.y, o.z, o.r, 1f, hot ? .25f : .85f, hot ? .2f : .1f);
             }
         }
+        Collisions tw = twin;
+        if (tw != null && tw.fromFile) {
+            // the editor's shapes: faint cyan cells, the one being approached / touched in orange (as Unreal's debug view)
+            float px = dp(showPhone ? 3 : 4);
+            synchronized (labelLock) {
+                int k = 0;
+                for (Collisions.Shape s : tw.shapes) {
+                    boolean hot = s.id == activeObj;
+                    if (s.preview.length > 0) renderer.drawShape(m, s.preview, s.preview.length, GLES20.GL_POINTS, hot ? 1f : .4f, hot ? .47f : .9f, hot ? .31f : .98f, hot ? px*1.6f : px);
+                    if (k >= labelViews.length) continue;
+                    float lx = s.cx, ly = s.cy + s.r*.5f, lz = s.cz;
+                    float cw = m[3]*lx + m[7]*ly + m[11]*lz + m[15]; if (cw <= .05f) continue;
+                    float nx = (m[0]*lx + m[4]*ly + m[8]*lz + m[12])/cw, ny = (m[1]*lx + m[5]*ly + m[9]*lz + m[13])/cw;
+                    if (Math.abs(nx) > 1.1f || Math.abs(ny) > 1.1f) continue;
+                    labelXY[k*2] = (nx*.5f + .5f)*width; labelXY[k*2+1] = (.5f - ny*.5f)*heightPx; labelTxt[k] = s.name; k++;
+                }
+                labelCount = k;
+            }
+        } else {
         List<AiObjects.Item> items = aiCache;
         synchronized (labelLock) {
             int k = 0;
@@ -1310,6 +1439,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
                 labelXY[k*2] = (nx*.5f + .5f)*width; labelXY[k*2+1] = (.5f - ny*.5f)*heightPx; labelTxt[k] = AiObjects.korean(it.label); k++;
             }
             labelCount = k;
+        }
         }
         if (a != null) renderer.drawShape(m, a, 3, GLES20.GL_POINTS, .2f, 1f, .4f, dp(9));
         if (b != null) renderer.drawShape(m, b, 3, GLES20.GL_POINTS, .3f, .6f, 1f, dp(9));
@@ -1358,16 +1488,27 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         StringBuilder bar = new StringBuilder(); int n = Math.round(i*12); for (int k = 0; k < 12; k++) bar.append(k < n ? '█' : '·');
         String what = o < 0 ? "범위 밖" : o == 0 ? (walkMode ? "벽·장애물" : "스캔 표면") : objName(o);
         if (walkMode) {
-            float na = hudNear, ah = hudAhead;
-            return String.format(Locale.US, "🚶 %s  앞 %s · 주변 %s%s\n%s %3.0f%%  %s",
-                hudContact ? "▶ 부딪힘 주의" : hudDeadEnd ? "■ 막다른 곳" : "걷기", Float.isInfinite(ah) ? "열림" : String.format(Locale.US, "%.2fm", ah),
-                Float.isInfinite(na) ? "여유" : String.format(Locale.US, "%.2fm", na), o < 0 ? "" : " (" + what + ")", bar, i*100, obstacles == null ? "장애물 지도 준비 중" : "");
+            // nearest shape on the floor plane (what Unreal's sound and touch use)
+            Collisions tw = twin; String nearest = "사물 없음"; float sc = scale;
+            if (tw != null) {
+                Collisions.Shape b = null; for (Collisions.Shape s : tw.shapes) if (!s.muted && (b == null || s.floorD < b.floorD)) b = s;
+                if (b != null && !Float.isInfinite(b.floorD)) nearest = String.format(Locale.US, "%s %.2fm", b.name, b.floorD*sc);
+            }
+            boolean justTouched = SystemClock.uptimeMillis() - touchedAt < 1500 && touchedObj >= 0;
+            String touched = justTouched ? "▶ 닿음: " + objName(touchedObj) : "가장 가까운 사물: " + nearest;
+            String guide = guideOn ? String.format(Locale.US, "\n안내: 앞 %s · 주변 %s%s", Float.isInfinite(hudAhead) ? "열림" : String.format(Locale.US, "%.2fm", hudAhead),
+                Float.isInfinite(hudNear) ? "여유" : String.format(Locale.US, "%.2fm", hudNear), hudDeadEnd ? " · 막다른 곳" : "") : "";
+            String snd = soundNow;
+            return String.format(Locale.US, "🚶 %s\n진동 %s %3.0f%%%s%s%s", touched, bar, i*100, o < 0 ? "" : " (" + what + (Float.isInfinite(d) ? "" : String.format(Locale.US, " %.2fm", d)) + ")",
+                snd.isEmpty() ? "" : "\n♪ " + snd, guide);
         }
         float[] p = lastPosition;
         return String.format(Locale.US, "%s %s %s\n%s %3.0f%%  X %.2f  Y %.2f  Z %.2f m",
             hudContact ? "▶ 접촉" : "  근접", what, Float.isInfinite(d) ? "" : String.format(Locale.US, "%.2fm", d), bar, i*100, p[0], p[1], p[2]);
     }
     private String objName(int id) {
+        Collisions tw = twin;
+        if (tw != null) for (Collisions.Shape s : tw.shapes) if (s.id == id) return s.name;
         if (id >= 100) { List<AiObjects.Item> l = aiCache; return id - 100 < l.size() ? AiObjects.korean(l.get(id - 100).label) : "AI 사물"; }
         synchronized (data) { for (Obj o : objects) if (o.id == id) return o.name; } return "사물 " + id; }
 
@@ -1446,12 +1587,86 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         if (hz < .5f*len) { float[] t = dirXf(sFromWorld, y); float sg = f[1] < 0 ? 1 : -1; f = new float[]{t[0]*sg, t[1]*sg, t[2]*sg}; hz = (float)Math.hypot(f[0], f[2]); }
         return hz < 1e-6f ? new float[]{0, -1} : new float[]{f[0]/hz, f[2]/hz};
     }
+    /**
+     * Walking test, the same as Unreal: the phone's distance to the scan surfaces and the collision shapes drives the
+     * vibration (Measure → PTH1), the floor-plane distance to each shape drives its approach sound and the touch
+     * (≤ 35 cm: chime + a vibration tap, again every 4 s while it lasts). Nothing is scanned or recognised here.
+     */
     private void walkTwin(Camera camera) {
-        ObstacleMap om = obstacles; float sc = scale; float[] p = camS;
-        if (om == null || p == null) {
-            feedback.update(true, 0, false, -1, Float.POSITIVE_INFINITY); hudNear = hudAhead = Float.POSITIVE_INFINITY; hudDeadEnd = false;
-            hudDist = Float.POSITIVE_INFINITY; hudIntensity = 0; hudObj = -1; hudContact = false; nearOn = false; activeObj = -1; return;
+        float sc = scale; float[] p = camS, hand = probeS; Collisions tw; List<TwinAudio.Voice> vs; Collisions.Toucher[] ts;
+        synchronized (twinLock) { tw = twin; vs = twinVoices; ts = touchers; }
+        if (p == null || hand == null) { silenceTwin(); feedback.update(true, 0, false, -1, Float.POSITIVE_INFINITY); return; }
+        // 1. the hand (phone) near a surface or a shape: vibration, like Unreal's Measure()
+        float best = Float.POSITIVE_INFINITY; int obj = -1; float[] near = new float[3];
+        SurfaceIndex idx = index;
+        if (surfaceOn && idx != null) {
+            float d = idx.nearest(hand[0], hand[1], hand[2], range/sc, skipFloor, floorY(), .10f/sc, near);
+            if (!Float.isInfinite(d)) {
+                best = d*sc; obj = 0; System.arraycopy(near, 0, nearS, 0, 3);
+                if (tw != null) for (Collisions.Shape o : tw.shapes)   // surface of a recognised object (spheres only)
+                    if (o.ai && o.isSphere() && Math.sqrt(sq(near[0]-o.cx) + sq(near[1]-o.cy) + sq(near[2]-o.cz)) < o.r + .1f/sc) { obj = o.id; break; }
+            }
         }
+        if (tw != null) {
+            tw.measure(p, hand);
+            for (Collisions.Shape o : tw.shapes) {
+                if (o.ai && o.isSphere()) continue;
+                float hd = o.handD*sc;   // a real shape lies on the scan surface: the shape wins a tie
+                if (hd < best + (obj == 0 ? .03f : 0)) { best = Math.min(best, hd); obj = o.id; System.arraycopy(o.handNear, 0, nearS, 0, 3); }
+            }
+        }
+        float intensity = Collisions.intensity(best, range, contactDist);
+        boolean contact = best <= Math.min(contactDist, range*.9f), pulse = false;
+        if (best >= range) obj = -1;
+        float dist = best;
+
+        // 2. sounds + touch, like Unreal's UpdateSounds() / DriveSound()
+        double now = SystemClock.uptimeMillis()/1000.0; float[] h = heading(camera);
+        String loudest = ""; float loud = .05f; int touchNow = -1;
+        if (tw != null && vs.size() == tw.shapes.size() && ts.length == tw.shapes.size()) {
+            int n = tw.shapes.size(); float[] fd = new float[n];
+            for (int i = 0; i < n; i++) fd[i] = tw.shapes.get(i).floorD*sc;
+            float[] g = tw.gains(fd, p, h, sc);
+            for (int i = 0; i < n; i++) {
+                Collisions.Shape o = tw.shapes.get(i); TwinAudio.Voice v = vs.get(i);
+                boolean byHand = contact && obj == o.id;
+                boolean touch = !o.muted && (byHand || fd[i] <= Collisions.TOUCH), release = !byHand && fd[i] > Collisions.TOUCH + Collisions.RELEASE_EXTRA;
+                float s = ts[i].step(now, touch, release);
+                TwinAudio.set(v, soundOn ? g[i] : 0);
+                if (s > 0) { if (soundOn) TwinAudio.strike(v, s); feedback.touch(s); touchedObj = o.id; touchedAt = SystemClock.uptimeMillis(); }
+                if (ts[i].touching) touchNow = i;
+                float shown = now - ts[i].lastStrike < 2 ? 1 : g[i];
+                if (shown > loud) { loud = shown; loudest = (now - ts[i].lastStrike < 2 ? "닿음 " : "") + o.name + " — " + v.idea; }
+            }
+        }
+        boolean surf = obj == 0;
+        TwinAudio.set(surfaceVoice, soundOn && surf ? intensity*.7f : 0);
+        float ss = surfaceToucher.step(now, surf && contact, !(surf && contact));
+        if (ss > 0 && soundOn) TwinAudio.strike(surfaceVoice, ss);
+        soundNow = loudest;
+
+        // 3. optional: the old wall / obstacle guidance
+        ObstacleMap om = obstacles;
+        if (guideOn && om != null) {
+            float[] gd = guide(camera, om, p, sc);
+            if (gd[0] > intensity) { intensity = gd[0]; pulse = gd[2] > 0; dist = Math.min(dist, gd[3]); if (obj < 0) obj = 0; }
+            contact |= gd[1] > 0;
+        } else { hudNear = hudAhead = Float.POSITIVE_INFINITY; hudDeadEnd = false; }
+
+        nearOn = obj >= 0; activeObj = obj >= 0 ? obj : touchNow >= 0 && tw != null ? tw.shapes.get(touchNow).id : -1;
+        feedback.update(true, intensity, contact, obj, dist, pulse);
+        hudDist = dist; hudIntensity = intensity; hudObj = obj; hudContact = contact;
+    }
+    private static float sq(float v) { return v*v; }
+    /** Unreal stops every sound when tracking is lost or the walking test is off. */
+    private void silenceTwin() {
+        List<TwinAudio.Voice> vs = twinVoices; Collisions.Toucher[] ts = touchers; double now = SystemClock.uptimeMillis()/1000.0;
+        for (TwinAudio.Voice v : vs) TwinAudio.set(v, 0);
+        for (Collisions.Toucher t : ts) t.step(now, false, true);
+        TwinAudio.set(surfaceVoice, 0); surfaceToucher.step(now, false, true); soundNow = "";
+    }
+    /** The old walking guidance from the obstacle map: {intensity, contact, pulse, distance}. */
+    private float[] guide(Camera camera, ObstacleMap om, float[] p, float sc) {
         float[] h = heading(camera), out = new float[2];
         float near = om.nearest(p[0], p[2], walkRange/sc, out)*sc;
         float ahead = om.ahead(p[0], p[2], h[0], h[1], lookAhead/sc, bodyHalf/sc)*sc;
@@ -1463,16 +1678,8 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         if (deadEnd) aheadI = Math.max(aheadI, .5f);
         float intensity = Math.max(aroundI, aheadI);
         boolean contact = near <= ct || ahead <= ca, pulse = aheadI > 0 && aheadI >= aroundI;
-        int obj = -1; float dist = Math.min(near, ahead);
-        if (intensity > 0) {
-            if (pulse) { nearS[0] = p[0] + h[0]*ahead/sc; nearS[2] = p[2] + h[1]*ahead/sc; } else { nearS[0] = out[0]; nearS[2] = out[1]; }
-            nearS[1] = p[1];
-            obj = aiAt(nearS[0], nearS[1], nearS[2], false);
-        }
-        nearOn = obj >= 0; activeObj = obj;
-        feedback.update(true, intensity, contact, obj, dist, pulse);
         hudNear = near; hudAhead = ahead; hudDeadEnd = deadEnd;
-        hudDist = dist; hudIntensity = intensity; hudObj = obj; hudContact = contact;
+        return new float[]{intensity, contact ? 1 : 0, pulse ? 1 : 0, Math.min(near, ahead)};
     }
     /** 100+index of the recognised object containing the point (horizontal only when !full3d), else 0 (plain surface). */
     private int aiAt(float x, float y, float z, boolean full3d) {
@@ -1598,18 +1805,15 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         sig.append(prefs.getString("sound_default", ""));
         if (sig.toString().equals(aiSig)) return;
         aiSig = sig.toString(); aiList.removeAllViews();
-        if (count.isEmpty()) aiList.addView(label("인식된 사물 없음 · 스캔하거나 걷기 테스트 중에 사물을 비추면 자동으로 추가됩니다", 12));
+        if (count.isEmpty()) aiList.addView(label("인식된 사물 없음 · 스캔하는 동안 사물을 비추면 자동으로 추가됩니다", 12));
         for (Map.Entry<String, Integer> e : count.entrySet()) {
-            final String lab = e.getKey(); String snd = prefs.getString("sound_" + AiObjects.fileKey(lab), "");
-            TextView t = label(AiObjects.korean(lab) + " ×" + e.getValue() + "\n소리: " + (snd.isEmpty() ? "기본" : snd), 12);
+            final String lab = e.getKey();
+            TextView t = label(AiObjects.korean(lab) + " ×" + e.getValue(), 12);
             LinearLayout r = new LinearLayout(this); r.setGravity(Gravity.CENTER_VERTICAL);
             r.addView(t, new LinearLayout.LayoutParams(0, -2, 2));
-            r.addView(button("소리 지정", v -> pickSound(lab)), new LinearLayout.LayoutParams(0, -2, 1));
             r.addView(button("삭제", v -> { ai.removeLabel(lab); refreshAi(); saveScanData(); refreshPanel(); }), new LinearLayout.LayoutParams(0, -2, 1));
             aiList.addView(r);
         }
-        String def = prefs.getString("sound_default", "");
-        aiList.addView(label("기본 소리: " + (def.isEmpty() ? "내장 신호음" : def), 12));
     }
     private void chooseLabelForSound() {
         String[] names = new String[AiObjects.LABELS.length];

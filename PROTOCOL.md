@@ -171,6 +171,7 @@ TouchDesigner(`Phone_Twin_Project.toe`)가 이것을 받아 움직임 신호로 
 | `ARKO_PROJECT/PhoneTwinScans/collisions/history/` | 저장할 때마다 남는 이전 판 |
 | `ARKO_PROJECT/PhoneTwinScans/sounds/*.wav` | 편집기가 넣은 소리 (48 kHz 16-bit PCM, 1·2채널) |
 | `web_scans/<id>.collision.json` | 같은 내용의 사본, 웹 뷰어용. 편집기 서버가 마지막 저장 15초 뒤 GitHub에 커밋·푸시(`--no-publish`면 안 함) |
+| `web_scans/sounds/*.wav` | 콜리전 파일이 쓰는 소리의 사본. 편집기 서버가 올릴 때 함께 복사·커밋(`tools/web_sounds.mjs`). 휴대폰 앱이 GitHub에서 받아 언리얼과 같은 소리를 냄 |
 | `ARKO_PROJECT/PhoneTwinScans/collisions/last_saved.txt` | 마지막으로 저장한 스캔 id. 언리얼은 시작할 때 이 스캔을 열고(`-PhoneTwinScan=`이 없으면), 실행 중 바뀌면 그 스캔으로 전환 (`bFollowEditorScan`) |
 | `web_scans/edited.json` | `{"scan": "<id>"}` — 웹 뷰어·편집기가 주소에 스캔이 없을 때 처음 여는 스캔 |
 
@@ -189,6 +190,8 @@ TouchDesigner(`Phone_Twin_Project.toe`)가 이것을 받아 움직임 신호로 
 - 음량: `G = 1 (d ≤ fullDistance)`, 그 밖에는 `clamp((maxDistance − d) / (maxDistance − fullDistance), 0, 1)`, 최종 `G² × volume`. 웹 `distanceGain()`과 언리얼 `UpdateSounds()`가 같은 식이며, 언리얼은 관객이 등진 소리에 0.3배까지 줄이는 값을 더 곱합니다.
 
 언리얼은 파일이 없으면 스캔 meta의 구 모양으로 동작합니다.
+
+휴대폰 앱(0.4.4~)도 같은 규칙입니다: GitHub에서 스캔을 불러오면 `web_scans/<id>.collision.json`과 그 소리를 함께 받고(소리는 git blob sha로 바뀐 것만), 걷기 테스트 중 언리얼과 같은 식으로 거리·닿음(바닥 거리 ≤ 35cm, 계속 닿으면 4초마다 0.55)·음량(가까운 6개, 등지면 0.3배)을 계산합니다. 소리를 넣지 않은 사물은 언리얼 `PhoneTwinCalmSound.cpp`를 옮긴 `CalmSynth.java`가 같은 소리를 만듭니다(두 구현은 샘플 단위로 일치 — 한쪽을 고치면 다른 쪽도). `/Game/…` 언리얼 에셋 소리는 휴대폰에서 내장 소리로 대신합니다.
 
 ## 6. 스캔 원본 보관
 

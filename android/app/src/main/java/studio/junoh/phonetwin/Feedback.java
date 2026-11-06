@@ -62,11 +62,14 @@ final class Feedback {
     /** Full-strength vibration and ESP32 signal for one second, independent of tracking. */
     void test() { testUntil = System.currentTimeMillis() + 1000; }
     private volatile long testUntil = 0;
+    /** A touch on an object (the moment its chime rings): one firm tap, 1 = first touch, .55 = still touching. */
+    void touch(float strength) { touchStrength = strength; touches++; }
+    private volatile float touchStrength = 1; private volatile int touches = 0;
 
     // ------------------------------------------------------------ vibration + UDP, 30 Hz
     private void loop() {
         DatagramSocket socket = null; InetAddress address = null; String resolved = null;
-        long seq = 0, nextVibe = 0, lastAck = 0, lastResolve = 0; boolean vibrating = false, wasContact = false;
+        long seq = 0, nextVibe = 0, lastAck = 0, lastResolve = 0; boolean vibrating = false, wasContact = false; int seenTouches = 0;
         byte[] in = new byte[64];
         while (running) {
             long start = System.currentTimeMillis();
@@ -110,7 +113,17 @@ final class Feedback {
             // phone vibration
             try {
                 boolean active = phoneVibe && hasVibrator() && i > 0.01f;
-                if (active) {
+                int tc = touches;
+                if (tc != seenTouches) {
+                    seenTouches = tc;
+                    if (phoneVibe && hasVibrator() && !paused) {
+                        float s = touchStrength;
+                        vibe(amplitude ? VibrationEffect.createOneShot(Math.round(90 + 90*s), Math.round(120 + 135*s)) : VibrationEffect.createOneShot(Math.round(60 + 120*s), VibrationEffect.DEFAULT_AMPLITUDE));
+                        nextVibe = start + Math.round(100 + 90*s); vibrating = true;
+                    }
+                }
+                if (start < nextVibe && !active) { /* let the touch tap finish */ }
+                else if (active) {
                     if (c && !wasContact) { vibe(VibrationEffect.createOneShot(70, 255)); nextVibe = start + 80; }
                     else if (!c && !testing && vPulse) {
                         if (start >= nextVibe) {

@@ -55,6 +55,47 @@ final class GitHubScans {
     }
 
     List<Entry> list() throws IOException, JSONException { return parseIndex(new String(fetch("scans/index.json", null), "UTF-8")); }
+
+    /** The collision editor's file for a scan (web_scans/&lt;id&gt;.collision.json), or null when it has none. */
+    String collisionJson(String id) throws IOException {
+        try { return text("web_scans/" + id + ".collision.json"); }
+        catch (FileNotFoundException none) { return null; }
+    }
+    /** name → git blob sha of the sound files in web_scans/sounds (one API call; empty when the folder does not exist). */
+    Map<String, String> soundShas() throws IOException, JSONException {
+        Request.Builder q = new Request.Builder().url("https://api.github.com/repos/" + repo + "/contents/web_scans/sounds?ref=" + branch)
+            .header("Accept", "application/vnd.github+json").header("User-Agent", "PhoneTwin-v4").header("X-GitHub-Api-Version", "2022-11-28");
+        if (!token.isEmpty()) q.header("Authorization", "Bearer " + token);
+        Map<String, String> out = new HashMap<>();
+        try (Response r = client.newCall(q.build()).execute()) {
+            if (r.code() == 404) return out;
+            if (!r.isSuccessful()) throw new IOException("GitHub 소리 목록 응답 " + r.code());
+            JSONArray a = new JSONArray(r.body().string());
+            for (int i = 0; i < a.length(); i++) { JSONObject o = a.getJSONObject(i); if ("file".equals(o.optString("type"))) out.put(o.getString("name"), o.getString("sha")); }
+        }
+        return out;
+    }
+    /** git's blob id of a file, to know whether the phone already has GitHub's version. */
+    static String blobSha(File f) {
+        try (InputStream in = new FileInputStream(f)) {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1");
+            md.update(("blob " + f.length() + "\0").getBytes("US-ASCII"));
+            byte[] buf = new byte[1 << 16]; for (int k; (k = in.read(buf)) > 0; ) md.update(buf, 0, k);
+            StringBuilder s = new StringBuilder(); for (byte b : md.digest()) s.append(String.format("%02x", b)); return s.toString();
+        } catch (Exception e) { return ""; }
+    }
+    /** Downloads web_scans/sounds/&lt;name&gt; from the raw host (no API limit; names may be Korean or have spaces). */
+    void downloadSound(String name, File dst) throws IOException {
+        String url = "https://raw.githubusercontent.com/" + repo + "/" + branch + "/web_scans/sounds/" + java.net.URLEncoder.encode(name, "UTF-8").replace("+", "%20");
+        Request.Builder q = new Request.Builder().url(url).header("User-Agent", "PhoneTwin-v4");
+        if (!token.isEmpty()) q.header("Authorization", "Bearer " + token);
+        File tmp = new File(dst.getPath() + ".part");
+        try (Response r = client.newCall(q.build()).execute()) {
+            if (!r.isSuccessful()) throw new IOException(name + " 받기 실패 (" + r.code() + ")");
+            body(r, tmp);
+        }
+        if (dst.exists() && !dst.delete() || !tmp.renameTo(dst)) throw new IOException(name + " 저장 실패");
+    }
     String text(String path) throws IOException { return new String(fetch(path, null), "UTF-8"); }
     void download(String path, File dst) throws IOException { fetch(path, dst); }
 
@@ -65,13 +106,14 @@ final class GitHubScans {
         if (!token.isEmpty()) q.header("Authorization", "Bearer " + token);
         try (Response r = client.newCall(q.build()).execute()) {
             if (r.isSuccessful()) return body(r, dst);
-            if (r.code() == 404) throw new IOException(path + " 이(가) " + repo + " 에 없습니다");
+            if (r.code() == 404) throw new FileNotFoundException(path + "이(가) " + repo + " 에 없습니다");
             if (r.code() == 401) throw new IOException("GitHub 토큰이 잘못되었거나 만료되었습니다 (토큰 칸을 비우면 공개 저장소는 토큰 없이 읽습니다)");
             if (r.code() != 403 && r.code() != 429) throw new IOException("GitHub 응답 " + r.code());
         }
         // anonymous API limit used up: the raw host may lag a few minutes behind new uploads
         Request raw = new Request.Builder().url("https://raw.githubusercontent.com/" + repo + "/" + branch + "/" + path).header("User-Agent", "PhoneTwin-v4").build();
         try (Response r = client.newCall(raw).execute()) {
+            if (r.code() == 404) throw new FileNotFoundException(path);
             if (!r.isSuccessful()) throw new IOException("GitHub 읽기 실패 (" + r.code() + ")");
             return body(r, dst);
         }
