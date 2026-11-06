@@ -1,4 +1,15 @@
 plugins { id 'com.android.application' }
+
+// The relay key is never written in the source: it is read at build time from PhoneTwin/RELAY_KEY_private.txt
+// (last non-empty line, outside this git repository). An APK built with it must NOT be committed or released
+// (the copy goes to install/*_private.apk, which .gitignore keeps out). `-PnoRelayKey` builds the public APK without it.
+def relayKeyFile = new File(rootProject.projectDir, '../../RELAY_KEY_private.txt')
+def relayKey = ''
+if (!project.hasProperty('noRelayKey') && relayKeyFile.exists()) {
+    def lines = relayKeyFile.readLines('UTF-8').collect { it.trim() }.findAll { !it.isEmpty() }
+    if (!lines.isEmpty()) relayKey = lines.last()
+}
+
 android {
     namespace 'studio.junoh.phonetwin'
     compileSdk 36
@@ -6,10 +17,14 @@ android {
         applicationId 'studio.junoh.phonetwin.v4'
         minSdk 26
         targetSdk 34
-        versionCode 8
-        versionName '0.4.4'
+        versionCode 9
+        versionName '0.4.5'
         ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+        buildConfigField 'String', 'RELAY_URL', '"wss://phonetwin-relay-95wfh.ondigitalocean.app"'
+        buildConfigField 'String', 'RELAY_ROOM', '"arko"'
+        buildConfigField 'String', 'RELAY_KEY', '"' + relayKey.replace('\\', '\\\\').replace('"', '\\"') + '"'
     }
+    buildFeatures { buildConfig true }
     androidResources { noCompress 'tflite' }
     compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
 }

@@ -96,6 +96,8 @@ namespace PhoneTwin
 
 	PHONETWINLINK_API bool ParsePTP(const FString& Line, FPhonePose& Out);
 	PHONETWINLINK_API bool ParsePTE(const FString& Line, FEspPose& Out);
+	/** PTM1,scanId,ax,ay,az,bx,by,bz: the phone's scan A and B in S (m, Y up). */
+	PHONETWINLINK_API bool ParsePTM(const FString& Line, FString& OutScanId, FVector3f& OutA, FVector3f& OutB);
 	PHONETWINLINK_API FString MakePTH(uint32 Seq, bool bValid, float Intensity01, bool bContact, int32 ObjectId, double DistanceCm);
 	/** Audience pose computed by Unreal, for the web viewer: R frame (metres), yaw ccw degrees, source "phone"/"esp32". */
 	PHONETWINLINK_API FString MakePTU(uint32 Seq, bool bValid, const FString& Source, const FVector& RoomM, double YawDeg, int32 ObjectId, double DistanceCm, float Intensity01);

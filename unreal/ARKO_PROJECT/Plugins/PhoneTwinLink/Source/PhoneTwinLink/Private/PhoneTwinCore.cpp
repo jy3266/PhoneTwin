@@ -378,6 +378,16 @@ bool ParsePTP(const FString& Line, FPhonePose& Out)
 	return Out.P.ContainsNaN() == false;
 }
 
+bool ParsePTM(const FString& Line, FString& OutScanId, FVector3f& OutA, FVector3f& OutB)
+{
+	TArray<FString> W;
+	if (!Split(Line, TEXT("PTM1"), 8, W)) return false;
+	auto F = [&W](int32 i) { return (float)FCString::Atod(*W[i]); };
+	OutScanId = W[1];
+	OutA = FVector3f(F(2), F(3), F(4)); OutB = FVector3f(F(5), F(6), F(7));
+	return !OutA.ContainsNaN() && !OutB.ContainsNaN() && FVector2f(OutB.X - OutA.X, OutB.Z - OutA.Z).Size() > .05f;
+}
+
 bool ParsePTE(const FString& Line, FEspPose& Out)
 {
 	TArray<FString> W;

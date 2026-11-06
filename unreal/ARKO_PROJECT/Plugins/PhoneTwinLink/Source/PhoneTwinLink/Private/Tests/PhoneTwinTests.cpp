@@ -5,6 +5,11 @@
 #include "PhoneTwinCore.h"
 #include "PhoneTwinCloud.h"
 #include "PhoneTwinCalmSound.h"
+#include "Materials/Material.h"
+#include "MaterialShared.h"
+#include "RHIGlobals.h"
+#include "UObject/Package.h"
+#include "Misc/App.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 using namespace PhoneTwin;
@@ -84,6 +89,14 @@ bool FPhoneTwinPacketTest::RunTest(const FString&)
 	TestTrue(TEXT("PTP1 walk=0"), ParsePTP(TEXT("PTP1,43,1,0,0,0,0,0,-1,0,1,0,s,0"), P) && P.bValid && !P.bWalk);
 	TestTrue(TEXT("PTP1 walk=1"), ParsePTP(TEXT("PTP1,44,1,0,0,0,0,0,-1,0,1,0,s,1"), P) && P.bWalk);
 	TestFalse(TEXT("short PTP1"), ParsePTP(TEXT("PTP1,1,1,0,0"), P));
+	{
+		FString Id; FVector3f MA, MB;
+		TestTrue(TEXT("PTM1"), ParsePTM(TEXT("PTM1,phone_scan_1,0.1000,-1.2000,0.3000,1.1000,-1.2000,0.3000\n"), Id, MA, MB));
+		TestEqual(TEXT("PTM1 id"), Id, FString(TEXT("phone_scan_1")));
+		TestTrue(TEXT("PTM1 A/B"), MA.Equals(FVector3f(.1f, -1.2f, .3f), 1e-4f) && MB.Equals(FVector3f(1.1f, -1.2f, .3f), 1e-4f));
+		TestFalse(TEXT("PTM1 A=B rejected"), ParsePTM(TEXT("PTM1,s,0,0,0,0,0,0"), Id, MA, MB));
+		TestFalse(TEXT("short PTM1"), ParsePTM(TEXT("PTM1,s,0,0"), Id, MA, MB));
+	}
 	FEspPose E;
 	TestTrue(TEXT("PTE1"), ParsePTE(TEXT("PTE1,7,1,1.25,-0.5,1.1,90,-10,5"), E));
 	TestEqual(TEXT("esp yaw"), E.Yaw, 90.0); TestEqual(TEXT("esp y"), E.Y, -0.5);
@@ -270,5 +283,27 @@ bool FPhoneTwinCollisionTest::RunTest(const FString&)
 	IFileManager::Get().Delete(*WavPath);
 	Bytes[34] = 24;
 	TestFalse(TEXT("24-bit refused"), ParseWav(Bytes, Pcm, Rate, Ch, Err));
+	return true;
+}
+
+// the GPU look: the material graph builds and its shaders (with the LiDAR vertex factory) compile without errors
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhoneTwinMaterialTest, "PhoneTwin.Material", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPhoneTwinMaterialTest::RunTest(const FString&)
+{
+	using namespace PhoneTwin;
+#if WITH_EDITOR
+	UMaterial* M = BuildImmersiveMaterial(GetTransientPackage(), MakeUniqueObjectName(GetTransientPackage(), UMaterial::StaticClass(), TEXT("M_PhoneTwinTest")), RF_Transient);
+	TestTrue(TEXT("used with LiDAR point clouds"), M && M->bUsedWithLidarPointCloud);
+	if (!FApp::CanEverRender()) { AddInfo(TEXT("no renderer (-nullrhi): shaders are not compiled here")); return true; }
+	FMaterialResource* R = M ? M->GetMaterialResource(GMaxRHIFeatureLevel) : nullptr;
+	TestNotNull(TEXT("resource"), R);
+	if (R)
+	{
+		R->FinishCompilation();
+		for (const FString& E : R->GetCompileErrors()) AddError(E);
+		TestEqual(TEXT("compile errors"), R->GetCompileErrors().Num(), 0);
+	}
+	TestNotNull(TEXT("material for the actor"), GetImmersiveMaterial());
+#endif
 	return true;
 }

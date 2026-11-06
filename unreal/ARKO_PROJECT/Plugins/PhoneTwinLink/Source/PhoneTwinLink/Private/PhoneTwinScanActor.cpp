@@ -39,6 +39,8 @@
 #include "WebSocketsModule.h"
 #include "IWebSocket.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Engine/Texture2D.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPhoneTwin, Log, All);
 
@@ -194,6 +196,19 @@ void APhoneTwinScanActor::BeginPlay()
 	// two clouds for the light animation: a worker fills the hidden one while the other is drawn (rooted until EndPlay's worker is done)
 	LightBuffers.Reset();
 	for (int32 i = 0; i < 2; i++) { ULidarPointCloud* B = NewObject<ULidarPointCloud>(GetTransientPackage()); B->AddToRoot(); LightBuffers.Add(B); }
+	// the look as a GPU material on the scan as loaded: nothing is rebuilt while playing
+	if (bShaderLook)
+		if (UMaterialInterface* Mat = PhoneTwin::GetImmersiveMaterial())
+		{
+			LookMID = UMaterialInstanceDynamic::Create(Mat, this);
+			const int32 N = PhoneTwin::FTrailMemory::Size;
+			TrailTex = UTexture2D::CreateTransient(N, N, PF_B8G8R8A8);
+			TrailTex->SRGB = false; TrailTex->Filter = TF_Bilinear; TrailTex->AddressX = TA_Clamp; TrailTex->AddressY = TA_Clamp;
+			TrailTex->UpdateResource();
+			LookMID->SetTextureParameterValue(TEXT("PT_Trail"), TrailTex);
+			Cloud->SetMaterial(0, LookMID);
+		}
+	UE_LOG(LogPhoneTwin, Log, TEXT("light look: %s"), UsingShaderLook() ? TEXT("GPU material (every frame)") : TEXT("CPU rebuild"));
 
 	if (bShowHud)
 		if (UGameViewportClient* VP = GetWorld()->GetGameViewport())
@@ -317,6 +332,11 @@ void APhoneTwinScanActor::HandleLine(const FString& L, const FString& From)
 		if (PhoneTwin::ParsePTE(L, E)) { EspPose = E; Esp.LastTime = Now; Esp.Address = From; Esp.Seq = E.Seq; Esp.Packets++; bEspFromOsc = false; }
 	}
 	else if (L.StartsWith(TEXT("PTA1"))) EspAckTime = Now;   // vibration packets reach the ESP32
+	else if (L.StartsWith(TEXT("PTM1")))
+	{
+		FString Id; FVector3f A, B;
+		if (PhoneTwin::ParsePTM(L, Id, A, B)) { PhoneMarkScan = Id; PhoneMarkA = A; PhoneMarkB = B; PhoneMarkTime = Now; }
+	}
 }
 
 // ------------------------------------------------------------------------------------------------ internet relay (PROTOCOL.md §3)
@@ -437,7 +457,12 @@ bool APhoneTwinScanActor::IsSourceAlive(EPhoneTwinSource S) const
 	const UWorld* W = GetWorld(); if (!W) return false;
 	const FLink& L = S == EPhoneTwinSource::Phone ? Phone : Esp;
 	const bool bValid = S == EPhoneTwinSource::Phone ? PhonePose.bValid : EspPose.bValid;
-	return W->GetTimeSeconds() - L.LastTime < SignalTimeout && bValid;
+	return W->GetTimeSeconds() - L.LastTime < LinkTimeout(L) && bValid;
+}
+
+double APhoneTwinScanActor::LinkTimeout(const FLink& L) const
+{
+	return L.Address == TEXT("relay") ? FMath::Max(SignalTimeout, RelaySignalTimeout) : SignalTimeout;
 }
 
 // ------------------------------------------------------------------------------------------------ per frame
@@ -724,10 +749,18 @@ void APhoneTwinScanActor::DrawDebug() const
 		else if (bHot || (!bHideLevelGeometry && !O.bAi)) DrawDebugSphere(W, T.TransformPosition(O.C), O.R, 16, bHot ? FColor(255, 120, 80) : FColor::Yellow, false, -1, 0, bHot ? 1.f : .5f);
 		DrawDebugString(W, T.TransformPosition(O.C + FVector(0, 0, O.R + 10)), O.Name, nullptr, FColor::White, 0, true, 1.1f);
 	}
-	if (Frame.bAligned)
+	// floor marks A (green, the middle of the floor) and B (blue); the arrow A->B is +X, the way the model faces
+	FVector MA, MB; bool bPhoneMarks = false;
+	if (MarksAB(MA, MB, bPhoneMarks))
 	{
-		DrawDebugSphere(W, T.TransformPosition(FVector::ZeroVector), 6, 8, FColor::Green, false, -1, 0, 1);
-		DrawDebugString(W, T.TransformPosition(FVector(0, 0, 12)), TEXT("A"), nullptr, FColor::Green, 0, true);
+		const FVector Up(0, 0, 1), A0 = T.TransformPosition(MA), B0 = T.TransformPosition(MB);
+		DrawDebugCircle(W, A0 + Up, 15, 32, FColor(50, 255, 100), false, -1, 0, 2.f, T.GetUnitAxis(EAxis::X), T.GetUnitAxis(EAxis::Y), false);
+		DrawDebugLine(W, A0, A0 + T.TransformVector(Up * 35), FColor(50, 255, 100), false, -1, 0, 2.f);
+		DrawDebugString(W, A0 + T.TransformVector(Up * 42), TEXT("A"), nullptr, FColor(50, 255, 100), 0, true, 1.4f);
+		DrawDebugCircle(W, B0 + Up, 15, 32, FColor(80, 150, 255), false, -1, 0, 2.f, T.GetUnitAxis(EAxis::X), T.GetUnitAxis(EAxis::Y), false);
+		DrawDebugLine(W, B0, B0 + T.TransformVector(Up * 35), FColor(80, 150, 255), false, -1, 0, 2.f);
+		DrawDebugString(W, B0 + T.TransformVector(Up * 42), TEXT("B (+X)"), nullptr, FColor(80, 150, 255), 0, true, 1.4f);
+		DrawDebugDirectionalArrow(W, A0 + T.TransformVector(Up * 2), B0 + T.TransformVector(Up * 2), 25, FColor::White, false, -1, 0, 2.f);
 	}
 	if (!bTracking) return;
 	// the audience as a standing figure (floor -> device) so it reads from far away, and a line + distance to every object
@@ -750,6 +783,17 @@ void APhoneTwinScanActor::DrawDebug() const
 	DrawDebugDirectionalArrow(W, P, P + T.TransformVector(TrackerRot.Vector()) * 40, 12, FColor(40, 220, 255), false, -1, 0, 1.2f);
 	DrawDebugSphere(W, H, ReactRange, 20, FColor(255, 160, 40, 60), false, -1, 0, .3f);
 	if (bHasNearest) DrawDebugLine(W, H, T.TransformPosition(NearestPoint), FColor::Orange, false, -1, 0, 1.5f);
+}
+
+bool APhoneTwinScanActor::MarksAB(FVector& OutA, FVector& OutB, bool& bFromPhone) const
+{
+	// the phone's marks while it sends them for this scan (they follow its "스캔 A·B 자동"), else the scan's meta
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0;
+	bFromPhone = Now - PhoneMarkTime < 5.0 && (PhoneMarkScan.IsEmpty() || PhoneMarkScan == LoadedScanId);
+	if (bFromPhone) { OutA = Frame.Point(PhoneMarkA); OutB = Frame.Point(PhoneMarkB); return true; }
+	if (!LoadedMeta.bHasAB) return false;
+	OutA = Frame.Point(LoadedMeta.A); OutB = Frame.Point(LoadedMeta.B);
+	return FVector::Dist2D(OutA, OutB) > 5.0;
 }
 
 void APhoneTwinScanActor::HandleKeys()
@@ -812,6 +856,7 @@ void APhoneTwinScanActor::TickLight(float DeltaSeconds)
 	if (bTracking) RevealCenter = TrackerPos;
 	Reveal = FMath::FInterpConstantTo(Reveal, bTracking ? 1.f : 0.f, DeltaSeconds, 1.f);
 	if (Trail.IsValid()) Trail->Update(DeltaSeconds, FVector2f(RevealCenter.X, RevealCenter.Y), RevealRadius, TrailSeconds, bTracking);
+	if (UsingShaderLook()) { TrailUploadTimer += DeltaSeconds; TickShaderLook(); return; }
 	if (!bLightUp || !LightBase.IsValid() || bLightPending || LightBuffers.Num() < 2) return;
 	if ((LightTimer += DeltaSeconds) < 1.0 / LightRateHz) return;
 	LightTimer = 0;
@@ -847,6 +892,47 @@ void APhoneTwinScanActor::TickLight(float DeltaSeconds)
 		*Working = false;
 		AsyncTask(ENamedThreads::GameThread, [Weak, Buffer, Gen, bOk, Ms, BuildMs, Num]() { if (APhoneTwinScanActor* A = Weak.Get()) { A->LightBuildMs = BuildMs; A->OnLightBuilt(bOk ? Buffer : -1, Gen, Ms, Num); } });
 	});
+}
+
+void APhoneTwinScanActor::TickShaderLook()
+{
+	// the same inputs BuildImmersive / BuildGlow got, as material parameters (actor frame, cm); see PhoneTwinMaterial.cpp
+	const double Now = GetWorld()->GetTimeSeconds();
+	const FTransform& T = Cloud->GetComponentTransform();
+	const FVector O = T.GetLocation();
+	LookMID->SetVectorParameterValue(TEXT("PT_Org"), FLinearColor(O.X, O.Y, O.Z, FMath::DegreesToRadians(T.Rotator().Yaw)));
+	const int32 Mode = !bLightUp ? 4 : Look == EPhoneTwinLook::Classic ? 3 : Look == EPhoneTwinLook::Memory ? 0 : Look == EPhoneTwinLook::Wave ? 1 : 2;
+	LookMID->SetVectorParameterValue(TEXT("PT_A"), FLinearColor(RevealCenter.X, RevealCenter.Y, Reveal, RevealRadius));
+	LookMID->SetVectorParameterValue(TEXT("PT_B"), FLinearColor(Scatter, DensityGain, FloorZ, FMath::Fmod(Now, 10000.0)));
+	LookMID->SetVectorParameterValue(TEXT("PT_C"), FLinearColor(Mode, WaveSpeed, 0, 0));
+	static const FName WName[4] = { TEXT("PT_W0"), TEXT("PT_W1"), TEXT("PT_W2"), TEXT("PT_W3") };
+	FLinearColor Amps(0, 0, 0, 0);
+	for (int32 k = 0; k < 4; k++)
+	{
+		const PhoneTwin::FTouchWave& W = Waves[k];
+		const double Age = Now - W.Start;
+		const bool bOn = W.Amp > 0 && Age >= 0 && Age <= 8.0;
+		LookMID->SetVectorParameterValue(WName[k], FLinearColor(W.At.X, W.At.Y, W.At.Z, bOn ? (float)Age : -1.f));
+		Amps.Component(k) = bOn ? W.Amp : 0.f;
+	}
+	LookMID->SetVectorParameterValue(TEXT("PT_WA"), Amps);
+	LookMID->SetVectorParameterValue(TEXT("PT_G1"), FLinearColor(LitRadius, FadeRadius, NearBrightness, FarBrightness));
+	LookMID->SetVectorParameterValue(TEXT("PT_G2"), FLinearColor(IdleBrightness, NearWhite, Twinkle, 0));
+	if (Trail.IsValid()) LookMID->SetVectorParameterValue(TEXT("PT_Mem"), FLinearColor(Trail->Min.X, Trail->Min.Y, Trail->Extent.X, Trail->Extent.Y));
+
+	// the trail memory (128x128, 64 KB) at 30 Hz; it changes slowly
+	if (!TrailTex || !Trail.IsValid() || TrailUploadTimer < 1.0 / 30.0) return;
+	TrailUploadTimer = 0;
+	const int32 N = PhoneTwin::FTrailMemory::Size;
+	const bool bMem = TrailSeconds > 0 && Mode <= 2 && Trail->V.Num() == N * N;
+	uint8* Data = (uint8*)FMemory::Malloc(N * N * 4);
+	for (int32 i = 0; i < N * N; i++)
+	{
+		const uint8 V = bMem ? (uint8)FMath::RoundToInt(FMath::Clamp(Trail->V[i], 0.f, 1.f) * 255.f) : 0;
+		Data[i * 4] = V; Data[i * 4 + 1] = V; Data[i * 4 + 2] = V; Data[i * 4 + 3] = 255;
+	}
+	FUpdateTextureRegion2D* Region = new FUpdateTextureRegion2D(0, 0, 0, 0, N, N);
+	TrailTex->UpdateTextureRegions(0, 1, Region, N * 4, 4, Data, [](uint8* D, const FUpdateTextureRegion2D* R) { FMemory::Free(D); delete R; });
 }
 
 void APhoneTwinScanActor::OnLightBuilt(int32 Buffer, uint32 Gen, float Ms, int32 Num)
@@ -994,7 +1080,7 @@ FString APhoneTwinScanActor::HudText() const
 	auto Link = [&](const FLink& L, bool bValid, const TCHAR* Name) {
 		if (L.Packets == 0) return FString::Printf(TEXT("%s: 신호 없음 (UDP %d)"), Name, ListenPort);
 		const double Age = Now - L.LastTime;
-		return FString::Printf(TEXT("%s: %s · %s · %.0f ms 전%s"), Name, *L.Address, Age < SignalTimeout ? (bValid ? TEXT("추적 중") : TEXT("정렬/추적 대기")) : TEXT("끊김"),
+		return FString::Printf(TEXT("%s: %s · %s · %.0f ms 전%s"), Name, *L.Address, Age < LinkTimeout(L) ? (bValid ? TEXT("추적 중") : TEXT("정렬/추적 대기")) : TEXT("끊김"),
 			Age * 1000.0, Age > 5 ? TEXT(" (오래됨)") : TEXT(""));
 	};
 	FString S = FString::Printf(TEXT("입력: %s\n%s\n%s"), *SourceText(Source), *Link(Phone, PhonePose.bValid, TEXT("휴대폰")), *Link(Esp, EspPose.bValid, bEspFromOsc ? TEXT("UWB 태그 (Pi OSC)") : TEXT("UWB 태그")));
@@ -1007,6 +1093,12 @@ FString APhoneTwinScanActor::HudText() const
 		S += TEXT("\n릴레이: ") + RelayStatus;
 		if (!RelayPeers.IsEmpty()) S += TEXT(" · ") + RelayPeers;
 		if (R.Num()) S += FString::Printf(TEXT(" · 왕복 %.0f ms"), R[R.Num() / 2]);
+	}
+	if (!IsSourceAlive(Source))
+	{
+		// the other device is moving while this one is silent: say which key to press
+		const EPhoneTwinSource Other = Source == EPhoneTwinSource::Phone ? EPhoneTwinSource::Esp32 : EPhoneTwinSource::Phone;
+		if (IsSourceAlive(Other)) S += FString::Printf(TEXT("\n⚠ 신호는 %s에서 오고 있습니다 — [%d]을 누르세요"), *SourceText(Other), Other == EPhoneTwinSource::Phone ? 1 : 2);
 	}
 	if (!IsStarted()) S += TEXT("\n대기 중 — 휴대폰에서 '걷기 테스트 시작'을 누르면 진동·소리가 시작됩니다");
 	else if (!bTracking) S += TEXT("\n추적 대기 중 — 선택한 장치에서 신호가 오면 시작합니다");
@@ -1022,7 +1114,13 @@ FString APhoneTwinScanActor::HudText() const
 		S += FString::Printf(TEXT("\n점구름: 몰입 보기 '%s' · 반경 %.1f m · 흔적 %.0f초 [K 끄기 · L 모양]"), *LookText(), RevealRadius / 100.f, TrailSeconds);
 		if (Look == EPhoneTwinLook::Wave && Now - LastWaveTime < 3.0) S += FString::Printf(TEXT(" · ✦ %s 물결"), *LastWaveName);
 	}
+	if (bLightUp) S += UsingShaderLook() ? FString(TEXT(" · GPU")) : FString::Printf(TEXT(" · CPU %.0f ms"), LightMs);
 	if (bHideLevelGeometry) S += TEXT(" · 점구름만 [H]");
+	{
+		FVector MA, MB; bool bPhoneMarks = false;
+		if (MarksAB(MA, MB, bPhoneMarks))
+			S += FString::Printf(TEXT("\nA·B (%s): A 초록 · B 파랑 · 화살표 A→B = 앞(+X) · 간격 %.2f m"), bPhoneMarks ? TEXT("휴대폰") : TEXT("스캔 파일"), FVector::Dist2D(MA, MB) / 100.0);
+	}
 	S += FString::Printf(TEXT("\n보기: %s · 점 크기 %.2f%s"), View == EPhoneTwinView::Overview ? TEXT("전체 (멀리서)") : View == EPhoneTwinView::Tracker ? TEXT("장치 시점") : TEXT("레벨 캐릭터"),
 		PointSize, bSendOsc ? *FString::Printf(TEXT(" · OSC → %s:%d"), *OscAddress, OscPort) : TEXT(""));
 	if (!PhoneScanId.IsEmpty() && !LoadedScanId.IsEmpty() && PhoneScanId != LoadedScanId && Now - Phone.LastTime < 2)
@@ -1091,6 +1189,7 @@ void APhoneTwinScanActor::ApplyScan(const FString& Id, TSharedPtr<FPhoneTwinLoad
 	LightBase = MakeShared<TArray<FLidarPointCloudPoint>>(MoveTemp(Data->Points));   // light frames are made from these
 	LightGen++; LightTimer = 1e9;
 	Cloud->SetPointCloud(PC);
+	if (LookMID && Cloud->GetMaterial(0) != LookMID) Cloud->SetMaterial(0, LookMID);
 	Cloud->ScalingMethod = PointScaling;
 	Cloud->SetPointShape(bRoundPoints ? ELidarPointCloudSpriteShape::Circle : ELidarPointCloudSpriteShape::Square);
 	SetPointSize(PointSize);

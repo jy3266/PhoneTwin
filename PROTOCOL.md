@@ -48,6 +48,14 @@ PTP1,seq,valid,x,y,z,fx,fy,fz,ux,uy,uz,scanId,walk
 - `scanId` 휴대폰이 쓰는 스캔 이름(확장자 없음). 언리얼이 다른 스캔을 띄우고 있으면 경고합니다.
 - `walk` 1 = 휴대폰에서 **걷기 테스트가 실행 중**. 진동·소리·ESP32·언리얼 반응은 모두 이 값이 1일 때만 시작합니다(앱 0.4.2부터 `valid`도 걷기 테스트 중에만 1). 휴대폰이 연결되어 있으면 언리얼은 ESP32 입력도 이 값이 1일 때만 반응합니다. 필드가 없는 예전 앱은 `walk = valid`로 봅니다.
 
+### PTM1 — 휴대폰 → 언리얼 (스캔 A·B 표시용, 앱 0.4.5부터)
+```
+PTM1,scanId,ax,ay,az,bx,by,bz
+```
+- 휴대폰이 쓰는 스캔 A·B(좌표계 S, 미터, Y 위). 연결되어 있는 동안 1초에 한 번(UDP·릴레이 모두).
+- "스캔 A·B 자동"은 A = 스캔 바닥의 정중앙(바닥 점의 2%~98% 범위의 가운데), B = A에서 바닥의 긴 축 방향으로 1m(가구가 있으면 반대쪽·옆·대각선, 0.7·0.5m 순)입니다.
+- 언리얼은 `scanId`가 띄운 스캔과 같으면 A(초록)·B(파랑)·화살표 A→B를 그립니다(화살표 = 언리얼 +X). 좌표 변환·거리 계산에는 쓰지 않습니다 — 언리얼의 원점·방향은 스캔 meta의 a·b를 따릅니다. 5초 넘게 안 오면 meta의 a·b를 그립니다.
+
 ### PTE1 — ESP32 → 언리얼 (UWB 위치 + IMU 회전)
 ```
 PTE1,seq,valid,x,y,z,yaw,pitch,roll
@@ -111,7 +119,7 @@ DigitalOcean에는 한국 리전이 없어 가장 가까운 싱가포르(`sgp`)�
 ```
 wss://<앱 주소>/ws?room=<방 이름>&role=<phone|esp32|unreal|viewer>&key=<RELAY_KEY>
 ```
-- 텍스트 프레임 한 개에 §1의 줄(`PTP1`, `PTE1`, `PTH1`, `PTA1`)을 그대로 담습니다. 여러 줄이어도 됩니다.
+- 텍스트 프레임 한 개에 §1의 줄(`PTP1`, `PTM1`, `PTE1`, `PTH1`, `PTA1`)을 그대로 담습니다. 여러 줄이어도 됩니다.
 - 전달 규칙(같은 room 안에서만):
   - `phone`, `esp32`가 보낸 것 → `unreal`, `viewer`
   - `unreal`이 보낸 것 → `phone`, `esp32`, `viewer`
@@ -120,6 +128,7 @@ wss://<앱 주소>/ws?room=<방 이름>&role=<phone|esp32|unreal|viewer>&key=<RE
 - 지연 측정: 클라이언트가 `PTR1,ping,<임의 값>`을 보내면 서버가 보낸 쪽에만 `PTR1,pong,<같은 값>`을 돌려줍니다.
 - 서버 환경 변수 `RELAY_KEY`가 있으면 phone·esp32·unreal은 같은 key가 필요합니다. `VIEW_KEY`가 있으면 viewer도 key가 필요합니다(없으면 누구나 읽기 가능).
 - 서버는 15초마다 ping을 보내고, 클라이언트는 끊기면 2초 뒤 다시 접속합니다.
+- 앱 0.4.5부터 휴대폰은 켜자마자 릴레이에 접속하고(기본 주소·방 `arko`·앱에 넣은 키), 같은 Wi-Fi UDP는 설정 9번에서 켜면 함께 보냅니다. 언리얼은 릴레이로 온 휴대폰·ESP32 신호를 1.5초(`RelaySignalTimeout`)까지 끊김으로 보지 않습니다(UDP는 0.5초).
 - `PTU1` — 언리얼 → (릴레이) → viewer: 언리얼이 계산한 **관객 위치**. 휴대폰·ESP32 중 지금 선택된 장치의 위치를 웹에서 볼 수 있게 합니다(초당 15번, 걷기 테스트 중에만 `valid=1`).
   ```
   PTU1,seq,valid,source,x,y,z,yaw,objectId,distanceMm,intensity

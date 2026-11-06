@@ -69,5 +69,20 @@ public class V4Test {
         float[] far = UnrealLink.parsePth1("PTH1,1,1,0,0,-1,-1");
         assertTrue(Float.isInfinite(far[4])); assertEquals(-1, far[3], 0);
         assertNull(UnrealLink.parsePth1("PTA1,3,-60")); assertNull(UnrealLink.parsePth1("PTH1,x"));
+        assertEquals("PTM1,scan_a,0.1000,-1.2000,0.3000,1.1000,-1.2000,0.3000\n", UnrealLink.ptm1("scan,a", new float[]{.1f, -1.2f, .3f, 1.1f, -1.2f, .3f}));
+    }
+
+    @Test public void relayAndWifiRunTogether() {
+        UnrealLink l = new UnrealLink();
+        assertFalse(l.running());
+        l.start("127.0.0.1", 7999);
+        assertTrue(l.running());
+        l.startRelay("ws://127.0.0.1:1", "t", "");
+        assertTrue(l.relayMode());
+        l.stopRelay();
+        assertTrue("UDP keeps running", l.running());
+        l.stop();
+        assertFalse(l.running());
+        assertEquals("언리얼 연동 꺼짐", l.status);
     }
 }

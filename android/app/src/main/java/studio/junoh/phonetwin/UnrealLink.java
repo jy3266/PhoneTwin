@@ -20,13 +20,16 @@ import okhttp3.*;
 final class UnrealLink {
     static final int LISTEN_PORT = 4211;
 
-    private volatile boolean running = false;
+    // UDP (same Wi-Fi) and the relay can run at the same time: Unreal takes whichever line arrives
+    private volatile boolean udp = false;
     private volatile String host = ""; private volatile int port = 7777;
-    private volatile Thread sendThread, recvThread; private volatile DatagramSocket recvSocket;
+    private volatile Thread sendThread, recvThread, relayThread; private volatile DatagramSocket recvSocket;
+    private volatile String udpStatus = "", relayStatus = "";
 
     // latest pose in scan frame S (written by the GL thread as one array so it is never torn)
     private volatile float[] pose = null;         // {valid, x,y,z, fx,fy,fz, ux,uy,uz}
     private volatile String scanId = "";
+    private volatile float[] marks = null;        // scan A and B {ax,ay,az,bx,by,bz} in S, sent once a second as PTM1
 
     // last PTH1 from Unreal
     private volatile long rxAt = 0; private volatile String rxFrom = "";
@@ -34,7 +37,11 @@ final class UnrealLink {
     volatile String status = "언리얼 연동 꺼짐";
     private volatile long sent = 0;
 
-    boolean running() { return running; }
+    boolean running() { return udp || relay; }
+    private void showStatus() {
+        String u = udpStatus, r = relayStatus;
+        status = u.isEmpty() && r.isEmpty() ? "언리얼 연동 꺼짐" : u.isEmpty() ? r : r.isEmpty() ? u : r + "\nWi-Fi: " + u;
+    }
     /** True when a PTH1 arrived within ms. */
     boolean fresh(long ms) { return System.currentTimeMillis() - rxAt < ms; }
     /** How old an Unreal PTH1 may be before falling back to local haptics: the relay adds ~100-200 ms. */
@@ -79,16 +86,16 @@ final class UnrealLink {
     }
 
     synchronized void startRelay(String base, String room, String key) {
-        stop();
-        relayUrl = relayUrl(base, room, key, "phone"); gen++; relay = true; running = true; retryAt = 0; peers = ""; wsState = "접속 중";
+        stopRelay();
+        relayUrl = relayUrl(base, room, key, "phone"); gen++; relay = true; retryAt = 0; peers = ""; wsState = "접속 중";
         synchronized (rtts) { rtts.clear(); }
         if (client == null) client = new OkHttpClient.Builder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(0, TimeUnit.MILLISECONDS).pingInterval(15, TimeUnit.SECONDS).build();
-        Thread s = new Thread(this::relayLoop, "relay-send"); s.setDaemon(true); sendThread = s; s.start();
+        Thread s = new Thread(this::relayLoop, "relay-send"); s.setDaemon(true); relayThread = s; s.start();
     }
 
     private void relayLoop() {
-        long seq = 0, lastPing = 0;
-        while (running && relay && Thread.currentThread() == sendThread) {
+        long seq = 0, lastPing = 0, lastMarks = 0;
+        while (relay && Thread.currentThread() == relayThread) {
             long start = System.currentTimeMillis();
             WebSocket w = ws;
             if (w == null && start >= retryAt) {
@@ -97,7 +104,7 @@ final class UnrealLink {
                 final int g = gen;
                 client.newWebSocket(new Request.Builder().url(relayUrl).build(), new WebSocketListener() {
                     @Override public void onOpen(WebSocket s, Response r) {
-                        if (g != gen || !running || !relay) { s.close(1000, "stop"); return; }
+                        if (g != gen || !relay) { s.close(1000, "stop"); return; }
                         ws = s; wsOpen = true; wsState = "연결됨";
                     }
                     @Override public void onMessage(WebSocket s, String text) { if (g != gen) return; for (String l : text.split("\n")) if (!l.isEmpty()) onLine(l); }
@@ -108,11 +115,14 @@ final class UnrealLink {
             if (w != null && wsOpen) {
                 float[] q = pose;
                 if (q != null) { w.send(ptp1(++seq, q, scanId)); sent = start; }
+                float[] mk = marks;
+                if (mk != null && start - lastMarks >= 1000) { lastMarks = start; w.send(ptm1(scanId, mk)); }
                 if (start - lastPing >= 2000) { lastPing = start; w.send("PTR1,ping," + System.nanoTime()); }
             }
             float m; synchronized (rtts) { m = median(rtts); }
-            status = "릴레이 " + wsState + (peers.isEmpty() ? "" : " · " + peers) + (Float.isNaN(m) ? "" : String.format(Locale.US, " · 왕복 %.0f ms", m))
+            relayStatus = "릴레이 " + wsState + (peers.isEmpty() ? "" : " · " + peers) + (Float.isNaN(m) ? "" : String.format(Locale.US, " · 왕복 %.0f ms", m))
                 + (fresh(freshWindow()) ? " · 언리얼 진동 수신 OK" : " · 언리얼 진동 신호 없음");
+            showStatus();
             long wait = 33 - (System.currentTimeMillis() - start);
             if (wait > 0) try { Thread.sleep(wait); } catch (InterruptedException e) { break; }
         }
@@ -126,6 +136,15 @@ final class UnrealLink {
     void setPose(boolean valid, boolean walk, float[] p, float[] f, float[] u, String scanId) {
         pose = new float[]{valid ? 1 : 0, p[0], p[1], p[2], f[0], f[1], f[2], u[0], u[1], u[2], walk ? 1 : 0};
         this.scanId = scanId;
+    }
+    /** The app went to the background: keep the link but mark the pose as lost so Unreal does not hold a stale position. */
+    void pausePose() { float[] q = pose; if (q != null) { q = q.clone(); q[0] = 0; pose = q; } }
+    /** Scan A·B (scan frame S) so Unreal can show the same two floor marks; null = none. */
+    void setMarks(float[] a, float[] b) { marks = a == null || b == null ? null : new float[]{a[0], a[1], a[2], b[0], b[1], b[2]}; }
+
+    /** PTM1 line (PROTOCOL.md): PTM1,scanId,ax,ay,az,bx,by,bz — the phone's scan A·B in S (m, Y up). */
+    static String ptm1(String scanId, float[] m) {
+        return String.format(Locale.US, "PTM1,%s,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n", scanId.replace(',', '_'), m[0], m[1], m[2], m[3], m[4], m[5]);
     }
 
     /** PTP1 line (PROTOCOL.md): PTP1,seq,valid,x,y,z,fx,fy,fz,ux,uy,uz,scanId,walk */
@@ -145,22 +164,27 @@ final class UnrealLink {
     }
 
     synchronized void start(String host, int port) {
-        stop();
-        this.host = host.trim(); this.port = port; running = true; status = "언리얼로 보내는 중…";
+        stopUdp();
+        this.host = host.trim(); this.port = port; udp = true; udpStatus = "언리얼로 보내는 중…"; showStatus();
         Thread s = new Thread(this::sendLoop, "unreal-send"); s.setDaemon(true); sendThread = s; s.start();
         Thread r = new Thread(this::recvLoop, "unreal-recv"); r.setDaemon(true); recvThread = r; r.start();
     }
-    synchronized void stop() {
-        running = false; relay = false; gen++;
-        WebSocket w = ws; ws = null; wsOpen = false; if (w != null) w.close(1000, "stop");
+    synchronized void stop() { stopUdp(); stopRelay(); rxAt = 0; }
+    synchronized void stopUdp() {
+        udp = false; sendThread = null; recvThread = null;
         DatagramSocket r = recvSocket; if (r != null) r.close();
-        recvSocket = null; rxAt = 0; status = "언리얼 연동 꺼짐";
+        recvSocket = null; udpStatus = ""; showStatus();
+    }
+    synchronized void stopRelay() {
+        relay = false; relayThread = null; gen++;
+        WebSocket w = ws; ws = null; wsOpen = false; if (w != null) w.close(1000, "stop");
+        relayStatus = ""; showStatus();
     }
 
     private void sendLoop() {
-        long seq = 0; InetAddress addr = null; String resolved = null; long lastResolve = 0;
+        long seq = 0, lastMarks = 0; InetAddress addr = null; String resolved = null; long lastResolve = 0;
         try (DatagramSocket socket = new DatagramSocket()) {
-            while (running && Thread.currentThread() == sendThread) {
+            while (udp && Thread.currentThread() == sendThread) {
                 long start = System.currentTimeMillis();
                 try {
                     if (!host.equals(resolved) || (addr == null && start - lastResolve > 2000)) { resolved = host; lastResolve = start; addr = null; addr = InetAddress.getByName(host); }
@@ -168,21 +192,24 @@ final class UnrealLink {
                     if (addr != null && q != null) {
                         byte[] b = ptp1(++seq, q, scanId).getBytes(StandardCharsets.US_ASCII);
                         socket.send(new DatagramPacket(b, b.length, addr, port)); sent = start;
+                        float[] mk = marks;
+                        if (mk != null && start - lastMarks >= 1000) { lastMarks = start; byte[] mb = ptm1(scanId, mk).getBytes(StandardCharsets.US_ASCII); socket.send(new DatagramPacket(mb, mb.length, addr, port)); }
                     }
-                    status = (addr == null ? "언리얼 PC 주소를 찾는 중 (" + host + ")" : q == null ? "위치 대기 중" : "언리얼로 보내는 중 · " + addr.getHostAddress() + ":" + port)
+                    udpStatus = (addr == null ? "언리얼 PC 주소를 찾는 중 (" + host + ")" : q == null ? "위치 대기 중" : "언리얼로 보내는 중 · " + addr.getHostAddress() + ":" + port)
                         + (fresh(300) ? " · 언리얼 진동 수신 OK (" + rxFrom + ")" : " · 언리얼 진동 신호 없음");
-                } catch (Exception e) { status = "언리얼 송신 오류: " + e.getClass().getSimpleName(); if (e instanceof UnknownHostException) addr = null; }
+                } catch (Exception e) { udpStatus = "언리얼 송신 오류: " + e.getClass().getSimpleName(); if (e instanceof UnknownHostException) addr = null; }
+                showStatus();
                 long wait = 33 - (System.currentTimeMillis() - start);
                 if (wait > 0) try { Thread.sleep(wait); } catch (InterruptedException e) { break; }
             }
-        } catch (SocketException e) { status = "언리얼 송신 소켓 오류: " + e.getMessage(); }
+        } catch (SocketException e) { udpStatus = "언리얼 송신 소켓 오류: " + e.getMessage(); showStatus(); }
     }
 
     private void recvLoop() {
         try (DatagramSocket socket = new DatagramSocket(null)) {
             socket.setReuseAddress(true); socket.bind(new InetSocketAddress(LISTEN_PORT)); recvSocket = socket;
             byte[] buf = new byte[256];
-            while (running && Thread.currentThread() == recvThread) {
+            while (udp && Thread.currentThread() == recvThread) {
                 DatagramPacket p = new DatagramPacket(buf, buf.length);
                 socket.receive(p);
                 float[] v = parsePth1(new String(buf, 0, p.getLength(), StandardCharsets.US_ASCII));
@@ -191,7 +218,7 @@ final class UnrealLink {
                 rxFrom = p.getAddress().getHostAddress(); rxAt = System.currentTimeMillis();
             }
         } catch (Exception e) {
-            if (running && Thread.currentThread() == recvThread) status = "언리얼 수신 포트 " + LISTEN_PORT + " 오류: " + e.getClass().getSimpleName();
+            if (udp && Thread.currentThread() == recvThread) udpStatus = "언리얼 수신 포트 " + LISTEN_PORT + " 오류: " + e.getClass().getSimpleName();
         }
     }
 }

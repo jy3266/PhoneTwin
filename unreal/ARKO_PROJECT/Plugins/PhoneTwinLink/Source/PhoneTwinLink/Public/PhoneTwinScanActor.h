@@ -19,6 +19,8 @@ class UPhoneTwinFileWave;
 class UCameraComponent;
 class UAudioComponent;
 class USoundBase;
+class UMaterialInstanceDynamic;
+class UTexture2D;
 class FSocket;
 class SWidget;
 class IWebSocket;
@@ -122,11 +124,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Light", meta = (ClampMin = "0", ClampMax = "8"))
 	float BloomIntensity = 1.2f;
 
-	/** Brightness updates per second (each one rebuilds the cloud on a worker thread). */
+	/** Draw the light / immersive look in a GPU material on the scan as loaded: every frame, nothing rebuilt (smooth).
+	 *  Off = the older way, rebuilding the whole cloud on the CPU a few times a second (LightRateHz, LightMaxPoints). */
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|Light")
+	bool bShaderLook = true;
+
+	/** CPU look only: brightness updates per second (each one rebuilds the cloud on a worker thread). */
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Light", meta = (ClampMin = "2", ClampMax = "30"))
 	float LightRateHz = 20.f;
 
-	/** Most points drawn while Light Up is on (larger scans are thinned evenly). */
+	/** CPU look only: most points drawn while Light Up is on (larger scans are thinned evenly). */
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Light", meta = (ClampMin = "10000"))
 	int32 LightMaxPoints = 500000;
 
@@ -223,6 +230,10 @@ public:
 	/** A source counts as lost when no packet arrived for this long. */
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input", meta = (ClampMin = "0.1"))
 	float SignalTimeout = .5f;
+
+	/** The same over the internet relay, whose packets come in bursts (a short gap must not stop the audience). */
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input", meta = (ClampMin = "0.1"))
+	float RelaySignalTimeout = 1.5f;
 
 	/** ESP32 room frame (R) -> scan: where R's origin is (cm), extra yaw (deg) and scale. Zero/0/1 when UWB anchor 0 is on floor mark A and anchor 1 is towards B. */
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|ESP32 Frame")
@@ -401,6 +412,8 @@ protected:
 	UPROPERTY() TObjectPtr<ULidarPointCloud> StaticCloud;
 	UPROPERTY() TArray<TObjectPtr<ULidarPointCloud>> LightBuffers;
 	UPROPERTY() TArray<TObjectPtr<USoundBase>> UserSounds;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> LookMID;   // GPU look (bShaderLook)
+	UPROPERTY() TObjectPtr<UTexture2D> TrailTex;                // the trail memory for LookMID
 
 private:
 	struct FObjectUE
@@ -490,6 +503,14 @@ private:
 	PhoneTwin::FTouchWave Waves[4]; int32 WaveNext = 0; double LastWaveTime = -1e9; FString LastWaveName;
 	TSharedPtr<PhoneTwin::FTrailMemory> Trail; float DensityGain = 1;
 	FString LookText() const;
+	bool UsingShaderLook() const { return bShaderLook && LookMID != nullptr; }
+	void TickShaderLook();
+	double TrailUploadTimer = 0;
+	double LinkTimeout(const FLink& L) const;
+
+	// the phone's scan A·B (PTM1): drawn so the direction A→B (+X) can be checked
+	FString PhoneMarkScan; FVector3f PhoneMarkA = FVector3f::ZeroVector, PhoneMarkB = FVector3f::ZeroVector; double PhoneMarkTime = -1e9;
+	bool MarksAB(FVector& OutA, FVector& OutB, bool& bFromPhone) const;
 
 	TSharedPtr<IWebSocket> Relay;
 	FString RelayStatus, RelayPeers;

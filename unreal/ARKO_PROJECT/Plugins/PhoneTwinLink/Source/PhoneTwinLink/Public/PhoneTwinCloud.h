@@ -5,6 +5,9 @@
 #include "LidarPointCloudShared.h"
 #include "PhoneTwinCore.h"
 
+class UMaterialInterface;
+class UMaterial;
+
 namespace PhoneTwin
 {
 	inline void ToCloudPoints(const TArray<FVector3f>& S, const TArray<FColor>& Color, const FScanFrame& Frame, TArray<FLidarPointCloudPoint>& Out, TArray<FVector>* OutUE = nullptr)
@@ -75,4 +78,14 @@ namespace PhoneTwin
 	PHONETWINLINK_API void BuildImmersive(const TArray<FLidarPointCloudPoint>& Base, const FImmersiveParams& P, const FVector3f& Center, double Time, TArray<FLidarPointCloudPoint>& Out);
 	/** Wave strength 0..1+ at a point (the shader's ring + echo, fading over 8 s). */
 	PHONETWINLINK_API float WaveAt(const FImmersiveParams& P, const FVector3f& L, double Time);
+
+	// ---------------------------------------------------------------- the same looks on the GPU (PhoneTwinMaterial.cpp)
+	/** Material that draws BuildImmersive / BuildGlow in the shader from the static cloud (parameters PT_*, texture PT_Trail).
+	 *  The saved asset /Game/PhoneTwinScans/M_PhoneTwinImmersive if present, else (editor) built in memory. Null = CPU fallback. */
+	PHONETWINLINK_API UMaterialInterface* GetImmersiveMaterial();
+	PHONETWINLINK_API const TCHAR* ImmersiveMaterialPath();
+#if WITH_EDITOR
+	/** Builds the material graph (one custom HLSL node for the colour, one for the dust drift). */
+	PHONETWINLINK_API UMaterial* BuildImmersiveMaterial(UObject* Outer, FName Name, EObjectFlags Flags);
+#endif
 }

@@ -6,6 +6,8 @@ android/local.properties
 android/.idea/
 *.iml
 # APK is committed under install/ and also attached to GitHub Releases
+# ...except the build with the relay key inside (never commit or release it)
+install/*_private*.apk
 # Python
 __pycache__/
 *.pyc

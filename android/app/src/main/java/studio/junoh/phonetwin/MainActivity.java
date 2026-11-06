@@ -83,7 +83,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
 
     // ---- GitHub upload + Unreal link
     private final UnrealLink unreal = new UnrealLink();
-    private EditText ghRepo, ghBranch, ghToken, unrealHost, unrealPort, relayUrl, relayRoom, relayKey; private RadioButton viaRelay; private TextView ghInfo, unrealInfo;
+    private EditText ghRepo, ghBranch, ghToken, unrealHost, unrealPort, relayUrl, relayRoom, relayKey; private CheckBox useUdp; private TextView ghInfo, unrealInfo;
     private volatile String ghStatus = "업로드 전"; private volatile boolean uploading = false;
 
     // ---- aiming at the floor marks A/B with the camera visible
@@ -299,7 +299,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
 
         // 2. alignment
         panel.addView(section("2 · 정렬: 바닥의 두 점 A·B"));
-        panel.addView(row(button("스캔 A·B 자동 (바닥 1m)", v -> new Thread(() -> { if (cloud == null) toastNote("먼저 스캔 파일을 여세요"); else { autoScanAB(cloud); toastNote(note); } }, "auto-ab").start()),
+        panel.addView(row(button("스캔 A·B 자동 (A=바닥 정중앙, B=1m)", v -> new Thread(() -> { if (cloud == null) toastNote("먼저 스캔 파일을 여세요"); else { autoScanAB(cloud); toastNote(note); } }, "auto-ab").start()),
             button("A 직접 탭", v -> startPick(PICK_A)), button("B 직접 탭", v -> startPick(PICK_B))));
         panel.addView(row(button("현장 A 조준·기록", v -> enterAim(1)), button("현장 B 조준·기록", v -> enterAim(2))));
         panel.addView(check("A–B 실측 거리로 스케일 보정 (사진측량 스캔용)", prefs.getBoolean("scale", false), s -> { useScale = s; prefs.edit().putBoolean("scale", s).apply(); alignDirty = true; }));
@@ -377,29 +377,28 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         panel.addView(label("업로드하면 웹 뷰어(GitHub Pages)와 언리얼 ARKO_PROJECT가 이 스캔을 자동으로 가져갑니다. 토큰은 GitHub → Settings → Developer settings → Fine-grained tokens에서 이 저장소 하나만 고르고 Contents 권한을 Read and write로 만들어 붙여 넣으세요. 토큰은 이 휴대폰 안에만 저장됩니다.", 11));
 
         // 9. Unreal
-        panel.addView(section("9 · 언리얼 연동 (UDP / 인터넷 릴레이)"));
-        RadioGroup mode = new RadioGroup(this); mode.setOrientation(RadioGroup.VERTICAL);
-        RadioButton viaUdp = new RadioButton(this); viaUdp.setText("같은 Wi-Fi (UDP, 빠름 · 약 5ms)"); viaUdp.setTextColor(Color.WHITE); viaUdp.setId(View.generateViewId());
-        viaRelay = new RadioButton(this); viaRelay.setText("인터넷 릴레이 (DigitalOcean, 느림 · 약 100ms 이상)"); viaRelay.setTextColor(Color.WHITE); viaRelay.setId(View.generateViewId());
-        mode.addView(viaUdp); mode.addView(viaRelay);
-        if (prefs.getBoolean("ue_relay", false)) viaRelay.setChecked(true); else viaUdp.setChecked(true);
-        mode.setOnCheckedChangeListener((g, id) -> prefs.edit().putBoolean("ue_relay", id == viaRelay.getId()).apply());
-        panel.addView(mode);
+        panel.addView(section("9 · 언리얼 연동 (인터넷 릴레이 + 같은 Wi-Fi)"));
+        // the relay works on any network, so it is always on: the app is connected as soon as it opens
+        CheckBox viaUdp = check("같은 Wi-Fi로도 보내기 (PC IP 필요 · 더 빠름 약 5ms)", prefs.getBoolean("ue_udp", false), on -> prefs.edit().putBoolean("ue_udp", on).apply());
+        useUdp = viaUdp;
+        panel.addView(viaUdp);
         unrealHost = field("언리얼 PC IPv4 (예: 192.168.0.10) · Wi-Fi 방식", prefs.getString("ue_host", ""));
         unrealPort = field("포트", String.valueOf(prefs.getInt("ue_port", 7777))); unrealPort.setInputType(2);
         panel.addView(row(unrealHost)); panel.addView(row(unrealPort));
-        relayUrl = field("릴레이 주소 (예: wss://phonetwin-relay-xxxx.ondigitalocean.app)", prefs.getString("relay_url", ""));
-        relayRoom = field("방 이름 (언리얼·ESP32와 같게)", prefs.getString("relay_room", "arko"));
-        relayKey = field("릴레이 키 (서버의 RELAY_KEY)", prefs.getString("relay_key", ""));
+        relayUrl = field("릴레이 주소 (비워 두면 기본 서버)", prefs.getString("relay_url", ""));
+        relayRoom = field("방 이름 (언리얼과 같게, 기본 arko)", prefs.getString("relay_room", "arko"));
+        relayKey = field(BuildConfig.RELAY_KEY.isEmpty() ? "릴레이 키 (서버의 RELAY_KEY)" : "릴레이 키 — 비워 두면 앱에 들어 있는 키 사용", prefs.getString("relay_key", ""));
         relayKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         panel.addView(row(relayUrl)); panel.addView(row(relayRoom)); panel.addView(row(relayKey));
-        panel.addView(row(button("송신 시작", v -> startUnreal()), button("중지", v -> unreal.stop())));
+        panel.addView(row(button("다시 연결", v -> startUnreal()), button("중지", v -> unreal.stop())));
+        panel.addView(check("앱을 켜면 언리얼에 자동 연결", prefs.getBoolean("ue_auto", true), s -> prefs.edit().putBoolean("ue_auto", s).apply()));
         feedback.remote = unreal; feedback.useRemote = prefs.getBoolean("ue_haptic", true);
         panel.addView(check("언리얼이 계산한 진동 사용 (UDP 4211 또는 릴레이로 수신)", feedback.useRemote, s -> { feedback.useRemote = s; prefs.edit().putBoolean("ue_haptic", s).apply(); }));
         unrealInfo = label("", 12); panel.addView(unrealInfo);
-        panel.addView(label("휴대폰 위치·방향(PTP1)을 30Hz로 언리얼 PC에 보냅니다. 언리얼이 거리를 계산해 진동 세기(PTH1)를 돌려주면 그 값으로 진동하고, 신호가 끊기면 휴대폰이 직접 계산한 값으로 돌아갑니다. Wi-Fi 방식은 PC와 같은 Wi-Fi에 연결하세요. 같은 Wi-Fi가 안 되는 곳에서는 릴레이 방식을 고르고 DigitalOcean 릴레이 주소·방 이름·키를 넣으세요(언리얼 프로젝트 설정의 Relay 값과 같게). 릴레이는 싱가포르 서버를 거쳐 진동이 0.1~0.2초 늦습니다.", 11));
+        panel.addView(label("휴대폰 위치·방향(PTP1)을 30Hz로 언리얼 PC에 보냅니다. 앱을 켜면 인터넷 릴레이로 자동 연결되고, 끊기면 2초마다 다시 연결합니다(주소·방·키를 넣을 필요 없음). 언리얼이 거리를 계산해 진동 세기(PTH1)를 돌려주면 그 값으로 진동합니다. 같은 Wi-Fi에서 더 빠르게 하려면 위 체크를 켜고 PC IP를 넣은 뒤 '다시 연결'을 누르세요.", 11));
         panel.addView(label("\n", 8));
 
+        if (prefs.getBoolean("ue_auto", true)) startUnreal();   // always connected while the app is open
         setView(VIEW_ORBIT);
         loadScanData();
         if (new File(getFilesDir(), "scan_current").exists()) loadScan(); else refreshPanel();
@@ -484,6 +483,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         feedback.setPaused(true); sound.setPaused(true); twinAudio.setPaused(true);
         if (resumed) { surface.onPause(); if (session != null) session.pause(); resumed = false; }
         sender.send(packet(false, "APP_PAUSED", lastPosition, new float[]{1, 0, 0}, new float[]{0, 0, 1}));
+        unreal.pausePose();
         super.onPause();
     }
     @Override protected void onDestroy() {
@@ -556,17 +556,15 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
     }
     @Override public void onWindowFocusChanged(boolean focus) { super.onWindowFocusChanged(focus); if (focus && scanning) hideSystemBars(true); }
 
+    /** Relay always (default server, room and the key built into the app unless typed); UDP as well when ticked with a PC address. */
     private void startUnreal() {
-        if (viaRelay.isChecked()) {
-            String u = relayUrl.getText().toString().trim(), r = relayRoom.getText().toString().trim(), k = relayKey.getText().toString().trim();
-            if (u.isEmpty()) { toastNote("릴레이 주소를 넣으세요 (DigitalOcean 앱 주소)"); return; }
-            prefs.edit().putString("relay_url", u).putString("relay_room", r).putString("relay_key", k).apply();
-            unreal.startRelay(u, r, k);
-            return;
-        }
+        String u = relayUrl.getText().toString().trim(), r = relayRoom.getText().toString().trim(), k = relayKey.getText().toString().trim();
+        prefs.edit().putString("relay_url", u).putString("relay_room", r).putString("relay_key", k).apply();
+        unreal.startRelay(u.isEmpty() ? BuildConfig.RELAY_URL : u, r.isEmpty() ? BuildConfig.RELAY_ROOM : r, k.isEmpty() ? BuildConfig.RELAY_KEY : k);
         String h = unrealHost.getText().toString().trim(); int port;
         try { port = Integer.parseInt(unrealPort.getText().toString().trim()); } catch (NumberFormatException e) { port = -1; }
-        if (h.isEmpty() || port < 1 || port > 65535) { toastNote("언리얼 PC IP와 포트를 확인하세요"); return; }
+        if (!useUdp.isChecked() || h.isEmpty()) { unreal.stopUdp(); return; }
+        if (port < 1 || port > 65535) { toastNote("언리얼 PC 포트를 확인하세요"); return; }
         prefs.edit().putString("ue_host", h).putInt("ue_port", port).apply();
         unreal.start(h, port);
     }
@@ -897,7 +895,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         if (ab == null) { note = "스캔 바닥이 좁아 A·B를 자동으로 정하지 못했습니다 · 2번에서 'A 직접 탭'·'B 직접 탭'으로 지정하세요"; return false; }
         synchronized (data) { scanA = ab[0]; scanB = ab[1]; }
         saveScanData();
-        note = String.format(Locale.US, "스캔 A·B를 바닥에 %.1fm 간격으로 자동 지정했습니다 · 2번에서 현장 A·B를 조준·기록하세요", Alignment.horizontal(ab[0], ab[1]));
+        note = String.format(Locale.US, "스캔 A = 바닥 정중앙(초록), B = A에서 %.1fm(파랑) · 화살표 A→B가 언리얼의 앞(+X) · 2번에서 현장 A·B를 조준·기록하세요", Alignment.horizontal(ab[0], ab[1]));
         return true;
     }
 
@@ -987,6 +985,8 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         }
         // pose is valid only during the walking test: Unreal reacts only after "걷기 테스트 시작"
         unreal.setPose(walk, walk, ueP, ueF, ueU, currentScanId());
+        float[] sa, sb; synchronized (data) { sa = scanA; sb = scanB; }
+        unreal.setMarks(sa, sb);   // Unreal draws the same A (middle) and B
     }
 
     @Override public void onDrawFrame(GL10 gl) {
@@ -1441,8 +1441,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
             labelCount = k;
         }
         }
-        if (a != null) renderer.drawShape(m, a, 3, GLES20.GL_POINTS, .2f, 1f, .4f, dp(9));
-        if (b != null) renderer.drawShape(m, b, 3, GLES20.GL_POINTS, .3f, .6f, 1f, dp(9));
+        markAB(m, a, b);
         float[] p = probeS;
         if (!valid || p == null) return;
         float i = hudIntensity;
@@ -1451,6 +1450,34 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         if (showPhone && camS != null && camFwdS != null) {
             renderer.drawShape(m, camS, 3, GLES20.GL_POINTS, .1f, .9f, 1f, dp(7));
             renderer.drawShape(m, new float[]{camS[0], camS[1], camS[2], camFwdS[0], camFwdS[1], camFwdS[2]}, 6, GLES20.GL_LINES, .1f, .9f, 1f, 1);
+        }
+    }
+
+    /** Scan A (green, the middle of the floor) and B (blue): rings, short pillars, an arrow A→B (= Unreal's +X) and text labels. */
+    private void markAB(float[] m, float[] a, float[] b) {
+        if (a != null) { ring(m, a, .15f, .2f, 1f, .4f); renderer.drawShape(m, new float[]{a[0], a[1], a[2], a[0], a[1] + .35f, a[2]}, 6, GLES20.GL_LINES, .2f, 1f, .4f, 1); renderer.drawShape(m, a, 3, GLES20.GL_POINTS, .2f, 1f, .4f, dp(12)); }
+        if (b != null) { ring(m, b, .15f, .3f, .6f, 1f); renderer.drawShape(m, new float[]{b[0], b[1], b[2], b[0], b[1] + .35f, b[2]}, 6, GLES20.GL_LINES, .3f, .6f, 1f, 1); renderer.drawShape(m, b, 3, GLES20.GL_POINTS, .3f, .6f, 1f, dp(12)); }
+        if (a != null && b != null) {
+            float d = Alignment.horizontal(a, b);
+            if (d > 1e-4f) {
+                float ux = (b[0]-a[0])/d, uz = (b[2]-a[2])/d, y = a[1] + .01f, hl = Math.min(.25f, d*.3f);
+                float c = (float)Math.cos(Math.toRadians(25)), s = (float)Math.sin(Math.toRadians(25));
+                float lx = -(ux*c - uz*s)*hl, lz = -(ux*s + uz*c)*hl, rx = -(ux*c + uz*s)*hl, rz = -(-ux*s + uz*c)*hl;
+                renderer.drawShape(m, new float[]{a[0], y, a[2], b[0], y, b[2], b[0], y, b[2], b[0] + lx, y, b[2] + lz, b[0], y, b[2], b[0] + rx, y, b[2] + rz},
+                    18, GLES20.GL_LINES, 1f, 1f, 1f, 1);
+            }
+        }
+        synchronized (labelLock) {
+            for (int k = 0; k < 2; k++) {
+                float[] q = k == 0 ? a : b;
+                if (q == null || labelCount >= labelTxt.length) continue;
+                float lx = q[0], ly = q[1] + .4f, lz = q[2];
+                float cw = m[3]*lx + m[7]*ly + m[11]*lz + m[15]; if (cw <= .05f) continue;
+                float nx = (m[0]*lx + m[4]*ly + m[8]*lz + m[12])/cw, ny = (m[1]*lx + m[5]*ly + m[9]*lz + m[13])/cw;
+                if (Math.abs(nx) > 1.1f || Math.abs(ny) > 1.1f) continue;
+                labelXY[labelCount*2] = (nx*.5f + .5f)*width; labelXY[labelCount*2+1] = (.5f - ny*.5f)*heightPx;
+                labelTxt[labelCount] = k == 0 ? "A (중앙)" : "B (A→B = 앞)"; labelCount++;
+            }
         }
     }
 

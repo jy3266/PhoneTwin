@@ -11,6 +11,7 @@ public class RelayIT {
         String key = System.getenv("RELAY_IT_KEY") == null ? "" : System.getenv("RELAY_IT_KEY");
         UnrealLink l = new UnrealLink();
         l.setPose(true, true, new float[]{1, 2, 3}, new float[]{0, 0, -1}, new float[]{0, 1, 0}, "scan");
+        l.setMarks(new float[]{0, -1.2f, 0}, new float[]{1, -1.2f, 0});   // PTM1 once a second
         l.startRelay(url, "it", key);
         long until = System.currentTimeMillis() + 8000;
         while (System.currentTimeMillis() < until && !(l.fresh(500) && l.status.contains("왕복") && l.status.contains("unreal=1"))) Thread.sleep(100);
