@@ -26,3 +26,5 @@ ios/*.log
 # UWB gateway: per-room anchor positions and floor marks (see pi/anchors.example.json)
 pi/anchors.json
 unreal/**/Saved/
+# Apeficiation upstream clone for tools/apeficiation_sim.py (not ours to republish)
+tools/.apeficiation/

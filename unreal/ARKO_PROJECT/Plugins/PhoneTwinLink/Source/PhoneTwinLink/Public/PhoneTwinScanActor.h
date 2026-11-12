@@ -198,6 +198,17 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input", meta = (EditCondition = "bUwbOscInput", ClampMin = "0.0001"))
 	float UwbOscMetresPerUnit = 0.01f;
 
+	/** Apeficiation's own pi_gateway.py sends its room corner frame, not the scan's. Keys 7 / 8 (or PhoneTwin.UwbMark A|B)
+	 *  record where the tag is while it stands on the scan's floor marks A and B; from then on positions are turned into
+	 *  the scan frame. Saved in <Project>/PhoneTwinScans/uwb_frame.json, 9 / "PhoneTwin.UwbMark clear" forgets it.
+	 *  Turn this on if the tag moves mirrored (left and right swapped) after marking. */
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input", meta = (EditCondition = "bUwbOscInput"))
+	bool bUwbMirror = false;
+
+	/** A tag without /tag/heading (Apeficiation) faces where it walks: the heading follows each move of at least this many cm. */
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input", meta = (EditCondition = "bUwbOscInput", ClampMin = "1"))
+	float UwbHeadingStepCm = 15.f;
+
 	/** ESP32 / UWB gateway address for vibration. Empty = learn it from its PTE1 or OSC packets (the Pi gateway answers PTH1 on 4210). */
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|Input")
 	FString EspAddress;
@@ -390,6 +401,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void LoadScan(const FString& Id);
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void LoadNextScan();
 	UFUNCTION(BlueprintPure, Category = "Phone Twin") FTransform GetTrackerTransform() const;
+	/** UWB OSC frame: 0 = the tag stands on scan mark A now, 1 = on B, -1 = forget the marks. */
+	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void MarkUwb(int32 Which);
 
 	/** Multi-line status for the HUD. */
 	FString HudText() const;
@@ -474,7 +487,11 @@ private:
 
 	FSocket* Socket = nullptr;
 	FSocket* UwbSocket = nullptr;
-	bool bEspFromOsc = false; double UwbHeadingTime = -1e9, UwbResidual = -1; int32 UwbAnchors = 0;
+	bool bEspFromOsc = false; double UwbHeadingTime = -1e9, UwbResidual = -1, UwbQualityTime = -1e9; int32 UwbAnchors = 0;
+	PhoneTwin::FUwbMarks UwbMarks; bool bUwbHalfMark = false; FVector UwbPendingA = FVector::ZeroVector; FString UwbMarkStatus;
+	FVector UwbRaw = FVector::ZeroVector; TArray<TPair<double, FVector>> UwbRawHist;   // gateway frame, metres (last 2 s)
+	FVector UwbHeadingFrom = FVector::ZeroVector; bool bUwbHeadingFrom = false;
+	void LoadUwbMarks(); void SaveUwbMarks() const;
 	FLink Phone, Esp; double EspAckTime = -1e9;
 	PhoneTwin::FPhonePose PhonePose; PhoneTwin::FEspPose EspPose;
 	uint32 SendSeq = 0, WebSeq = 0; double SendAccum = 0, WebAccum = 0, SyncTimer = 0;

@@ -122,6 +122,27 @@ namespace PhoneTwin
 	/** Parses an OSC 1.0 datagram (a message or a #bundle, nested bundles too). Returns false on malformed data. */
 	PHONETWINLINK_API bool ParseOscPacket(const uint8* Data, int32 Len, TArray<FOscIn>& Out);
 
+	/** A gateway that sends the tag in its own room metres (gwsylvia/Apeficiation pi_gateway.py: origin = anchor 1's
+	 *  floor corner, Z up) is brought into room frame R with two marks: A and B = what that stream said while the tag
+	 *  stood on the scan's floor marks A and B. Result: A = origin, A->B = +X, Z (height) unchanged.
+	 *  bMirror flips the gateway's Y first (anchors numbered clockwise in the room). */
+	struct FUwbMarks
+	{
+		bool bValid = false; FVector A = FVector::ZeroVector, B = FVector(1, 0, 0); bool bMirror = false;
+		FVector Flip(const FVector& V) const { return bMirror ? FVector(V.X, -V.Y, V.Z) : V; }
+		double Angle() const { const FVector a = Flip(A), b = Flip(B); return FMath::Atan2(b.Y - a.Y, b.X - a.X); }
+		FVector ToRoom(const FVector& Raw) const
+		{
+			if (!bValid) return Raw;
+			const FVector r = Flip(Raw), a = Flip(A); const double c = FMath::Cos(Angle()), s = FMath::Sin(Angle());
+			const double dx = r.X - a.X, dy = r.Y - a.Y;
+			return FVector(c * dx + s * dy, -s * dx + c * dy, r.Z);
+		}
+		/** Yaw (deg, ccw from the gateway's +X) into R. */
+		double YawToRoom(double Deg) const { if (!bValid) return Deg; return (bMirror ? -Deg : Deg) - FMath::RadiansToDegrees(Angle()); }
+		double Spacing() const { return FVector2D(B.X - A.X, B.Y - A.Y).Size(); }
+	};
+
 	/** Same curve as the phone app: 0 at Range, 1 at Contact (and closer). */
 	inline float Intensity(double Dist, double Range, double Contact)
 	{

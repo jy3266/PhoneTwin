@@ -140,6 +140,17 @@ bool FPhoneTwinPacketTest::RunTest(const FString&)
 	TestTrue(TEXT("index"), ParseIndex(TEXT("{\"version\":1,\"scans\":[{\"id\":\"a\",\"points\":5},{\"id\":\"../evil\"}]}"), L));
 	TestEqual(TEXT("index filters bad ids"), L.Num(), 1);
 	if (L.Num() == 1) TestEqual(TEXT("default ply path"), L[0].Ply, FString(TEXT("scans/a.ply")));
+
+	// Apeficiation gateway frame (corner origin) -> scan frame R with marks A, B
+	FUwbMarks U; U.A = FVector(1, 1.5, 1); U.B = FVector(1, 2.5, 1.02); U.bValid = true;   // A->B points along the gateway's +Y
+	TestTrue(TEXT("uwb A -> origin"), U.ToRoom(FVector(1, 1.5, 1.2)).Equals(FVector(0, 0, 1.2), 1e-9));
+	TestTrue(TEXT("uwb B -> +X 1 m"), U.ToRoom(FVector(1, 2.5, 1.0)).Equals(FVector(1, 0, 1.0), 1e-9));
+	TestTrue(TEXT("uwb left of A->B -> +Y"), U.ToRoom(FVector(0, 1.5, 1.0)).Equals(FVector(0, 1, 1.0), 1e-9));
+	TestEqual(TEXT("uwb yaw along A->B = 0"), U.YawToRoom(90.0), 0.0, 1e-9);
+	U.bMirror = true;
+	TestTrue(TEXT("uwb mirror keeps A, B"), U.ToRoom(FVector(1, 2.5, 1.0)).Equals(FVector(1, 0, 1.0), 1e-9) && U.ToRoom(FVector(1, 1.5, 1.0)).Equals(FVector(0, 0, 1.0), 1e-9));
+	TestTrue(TEXT("uwb mirror swaps sides"), U.ToRoom(FVector(0, 1.5, 1.0)).Equals(FVector(0, -1, 1.0), 1e-9));
+	FUwbMarks None; TestTrue(TEXT("uwb no marks = as sent"), None.ToRoom(FVector(3, 2, 1)).Equals(FVector(3, 2, 1)));
 	return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPhoneTwinCalmTest, "PhoneTwin.CalmSound", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

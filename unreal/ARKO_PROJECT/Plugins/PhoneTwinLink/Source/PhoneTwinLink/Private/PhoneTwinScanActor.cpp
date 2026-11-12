@@ -38,6 +38,9 @@
 #include "Widgets/Notifications/SProgressBar.h"
 #include "WebSocketsModule.h"
 #include "IWebSocket.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/Texture2D.h"
@@ -105,6 +108,14 @@ static FAutoConsoleCommandWithWorldAndArgs GPhoneTwinLookCmd(TEXT("PhoneTwin.Loo
 			It->SetLook((EPhoneTwinLook)(Args.Num() ? FMath::Clamp(FCString::Atoi(*Args[0]), 0, 3) : ((uint8)It->Look + 1) % 4));
 	}));
 
+static FAutoConsoleCommandWithWorldAndArgs GPhoneTwinUwbMarkCmd(TEXT("PhoneTwin.UwbMark"), TEXT("PhoneTwin.UwbMark A|B|clear — the UWB tag stands on scan floor mark A / B now (Apeficiation gateway frame -> scan)"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+	{
+		if (!World || Args.Num() == 0) return;
+		const int32 W = Args[0].StartsWith(TEXT("a"), ESearchCase::IgnoreCase) ? 0 : Args[0].StartsWith(TEXT("b"), ESearchCase::IgnoreCase) ? 1 : -1;
+		for (TActorIterator<APhoneTwinScanActor> It(World); It; ++It) It->MarkUwb(W);
+	}));
+
 // ================================================================================================ HUD (Slate, no assets needed)
 class SPhoneTwinHud : public SCompoundWidget
 {
@@ -163,7 +174,7 @@ public:
 					]
 					+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
 					[ SNew(STextBlock).Font(Small).ColorAndOpacity(FLinearColor(.6f, .66f, .73f)).AutoWrapText(true)
-						.Text(FText::FromString(TEXT("1·2 입력 전환 · V 보기(전체/장치/캐릭터) · Q·E 회전 · 휠·Z·X 거리 · [ ] 점 크기 · K 빛 켬/끔 · B 콜리전 보기 · C 장치 시점 · H 점구름만/레벨 보기 · N 다음 스캔 · G 동기화 · M 마우스"))) ]
+						.Text(FText::FromString(TEXT("1·2 입력 전환 · V 보기(전체/장치/캐릭터) · Q·E 회전 · 휠·Z·X 거리 · [ ] 점 크기 · K 빛 켬/끔 · B 콜리전 보기 · C 장치 시점 · H 점구름만/레벨 보기 · N 다음 스캔 · G 동기화 · M 마우스 · 7·8 UWB 태그를 바닥 A·B에 두고 좌표 맞춤 (9 지움)"))) ]
 				]
 			]
 		];
@@ -191,6 +202,7 @@ void APhoneTwinScanActor::BeginPlay()
 {
 	Super::BeginPlay();
 	OpenSocket();
+	LoadUwbMarks();
 	ConnectRelay();
 	SurfaceSnd = MakeObjSound(TEXT("surface"), TEXT("스캔 표면"), FVector::ZeroVector, SurfaceSound);
 	// two clouds for the light animation: a worker fills the hidden one while the other is drawn (rooted until EndPlay's worker is done)
@@ -287,19 +299,87 @@ void APhoneTwinScanActor::HandleUwbOsc(const PhoneTwin::FOscIn& M, const FString
 	{
 		const double K = UwbOscMetresPerUnit;
 		if (!FMath::IsFinite(M.Num[0]) || !FMath::IsFinite(M.Num[1]) || !FMath::IsFinite(M.Num[2])) return;
-		EspPose.X = M.Num[0] * K; EspPose.Y = M.Num[1] * K; EspPose.Z = M.Num[2] * K;
+		// as the gateway sent it (metres); the marks turn Apeficiation's corner frame into the scan frame R
+		UwbRaw = FVector(M.Num[0] * K, M.Num[1] * K, M.Num[2] * K);
+		UwbRawHist.Add({ Now, UwbRaw });
+		while (UwbRawHist.Num() && Now - UwbRawHist[0].Key > 2.0) UwbRawHist.RemoveAt(0);
+		UwbMarks.bMirror = bUwbMirror;
+		const FVector R = UwbMarks.ToRoom(UwbRaw);
+		EspPose.X = R.X; EspPose.Y = R.Y; EspPose.Z = R.Z;
 		EspPose.Pitch = EspPose.Roll = 0;   // a UWB tag has no orientation; yaw comes from /tag/heading (walking direction)
+		// no /tag/heading (Apeficiation's gateway): face the way the tag walks
+		if (Now - UwbHeadingTime > 1.0)
+		{
+			if (!bUwbHeadingFrom) { UwbHeadingFrom = R; bUwbHeadingFrom = true; }
+			const FVector2D D(R.X - UwbHeadingFrom.X, R.Y - UwbHeadingFrom.Y);
+			if (D.Size() * 100.0 >= UwbHeadingStepCm) { EspPose.Yaw = FMath::RadiansToDegrees(FMath::Atan2(D.Y, D.X)); UwbHeadingFrom = R; }
+		}
 		EspPose.bValid = true; EspPose.Seq++;
 		Esp.LastTime = Now; Esp.Address = From; Esp.Seq = EspPose.Seq; Esp.Packets++;
 		bEspFromOsc = true;
 	}
-	else if (M.Address == TEXT("/tag/heading") && M.Num.Num() >= 1 && FMath::IsFinite(M.Num[0])) { EspPose.Yaw = M.Num[0]; UwbHeadingTime = Now; }
+	else if (M.Address == TEXT("/tag/heading") && M.Num.Num() >= 1 && FMath::IsFinite(M.Num[0])) { EspPose.Yaw = UwbMarks.YawToRoom(M.Num[0]); UwbHeadingTime = Now; bUwbHeadingFrom = false; }
 	else if (M.Address == TEXT("/tag/quality") && M.Num.Num() >= 1)
 	{
+		UwbQualityTime = Now;
 		UwbResidual = M.Num[0];
 		UwbAnchors = M.Num.Num() > 1 ? (int32)M.Num[1] : 0;
 		if (M.Num.Num() > 2 && M.Num[2] == 0) EspPose.bValid = false;
 	}
+}
+
+void APhoneTwinScanActor::MarkUwb(int32 Which)
+{
+	if (Which < 0)
+	{
+		UwbMarks.bValid = false; bUwbHalfMark = false; bUwbHeadingFrom = false;
+		IFileManager::Get().Delete(*(UPhoneTwinSettings::ScanDir() / TEXT("uwb_frame.json")), false, true, true);
+		UwbMarkStatus = TEXT("UWB A·B 지움 — 게이트웨이 좌표 그대로");
+		UE_LOG(LogPhoneTwin, Log, TEXT("UWB marks cleared"));
+		return;
+	}
+	const double Now = GetWorld()->GetTimeSeconds();
+	// average of the last second: one sweep is noisy, the tag stands still on the mark
+	FVector Sum = FVector::ZeroVector; int32 N = 0;
+	for (const TPair<double, FVector>& P : UwbRawHist) if (Now - P.Key <= 1.0) { Sum += P.Value; N++; }
+	if (N < 3) { UwbMarkStatus = TEXT("UWB 표시 실패: 최근 1초 안에 OSC 위치가 없습니다 (게이트웨이 켜졌나요?)"); return; }
+	const FVector P = Sum / N;
+	if (Which == 0)
+	{
+		UwbPendingA = P; bUwbHalfMark = true;
+		UwbMarkStatus = FString::Printf(TEXT("UWB A 기록 (%.2f, %.2f) m — 이제 태그를 B 위에 두고 8"), P.X, P.Y);
+	}
+	else
+	{
+		const FVector A = bUwbHalfMark ? UwbPendingA : UwbMarks.A;
+		if (!bUwbHalfMark && !UwbMarks.bValid) { UwbMarkStatus = TEXT("UWB: A를 먼저 (7)"); return; }
+		if (FVector2D(P.X - A.X, P.Y - A.Y).Size() < .3) { UwbMarkStatus = TEXT("UWB 표시 실패: A와 B가 30cm보다 가깝습니다"); return; }
+		UwbMarks.A = A; UwbMarks.B = P; UwbMarks.bValid = true; bUwbHalfMark = false; bUwbHeadingFrom = false;
+		SaveUwbMarks();
+		UwbMarkStatus = FString::Printf(TEXT("UWB A·B 맞춤 완료 · A→B 실측 %.2f m"), UwbMarks.Spacing());
+	}
+	UE_LOG(LogPhoneTwin, Log, TEXT("%s"), *UwbMarkStatus);
+}
+
+void APhoneTwinScanActor::SaveUwbMarks() const
+{
+	const FVector& A = UwbMarks.A; const FVector& B = UwbMarks.B;
+	const FString J = FString::Printf(TEXT("{\n  \"note\": \"UWB OSC gateway frame (m) at the scan floor marks A and B, written by Unreal keys 7/8\",\n  \"a\": [%.4f, %.4f, %.4f],\n  \"b\": [%.4f, %.4f, %.4f]\n}\n"),
+		A.X, A.Y, A.Z, B.X, B.Y, B.Z);
+	FFileHelper::SaveStringToFile(J, *(UPhoneTwinSettings::ScanDir() / TEXT("uwb_frame.json")), FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+}
+
+void APhoneTwinScanActor::LoadUwbMarks()
+{
+	FString J; UwbMarks.bValid = false;
+	if (!FFileHelper::LoadFileToString(J, *(UPhoneTwinSettings::ScanDir() / TEXT("uwb_frame.json")))) return;
+	TSharedPtr<FJsonObject> O; const TArray<TSharedPtr<FJsonValue>>* A = nullptr; const TArray<TSharedPtr<FJsonValue>>* B = nullptr;
+	if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(J), O) || !O.IsValid()
+		|| !O->TryGetArrayField(TEXT("a"), A) || !O->TryGetArrayField(TEXT("b"), B) || A->Num() < 3 || B->Num() < 3) return;
+	UwbMarks.A = FVector((*A)[0]->AsNumber(), (*A)[1]->AsNumber(), (*A)[2]->AsNumber());
+	UwbMarks.B = FVector((*B)[0]->AsNumber(), (*B)[1]->AsNumber(), (*B)[2]->AsNumber());
+	UwbMarks.bValid = UwbMarks.Spacing() >= .3;
+	if (UwbMarks.bValid) UwbMarkStatus = FString::Printf(TEXT("UWB A·B 맞춤 사용 중 (uwb_frame.json) · A→B 실측 %.2f m"), UwbMarks.Spacing());
 }
 
 void APhoneTwinScanActor::Receive()
@@ -812,6 +892,9 @@ void APhoneTwinScanActor::HandleKeys()
 	if (PC->WasInputKeyJustPressed(EKeys::K)) SetLightUp(!bLightUp);
 	if (PC->WasInputKeyJustPressed(EKeys::L)) SetLook((EPhoneTwinLook)(((uint8)Look + 1) % 4));
 	if (PC->WasInputKeyJustPressed(EKeys::B)) bShowCollisions = !bShowCollisions;
+	if (PC->WasInputKeyJustPressed(EKeys::Seven)) MarkUwb(0);
+	if (PC->WasInputKeyJustPressed(EKeys::Eight)) MarkUwb(1);
+	if (PC->WasInputKeyJustPressed(EKeys::Nine)) MarkUwb(-1);
 }
 
 void APhoneTwinScanActor::SetLightUp(bool bOn)
@@ -1087,6 +1170,14 @@ FString APhoneTwinScanActor::HudText() const
 	if (Esp.Packets == 0 && UwbSocket) S += FString::Printf(TEXT(" · OSC %d %s 대기"), UwbOscPort, *UwbOscAddress);
 	if (bEspFromOsc && UwbAnchors > 0) S += FString::Printf(TEXT(" · 앵커 %d개 · 오차 %.0f cm"), UwbAnchors, UwbResidual * 100.0);
 	if (Now - EspAckTime < 1.5) S += TEXT(" · 진동 응답 OK");
+	if (bEspFromOsc)
+	{
+		// Apeficiation's gateway sends only /tag/position (no quality, no heading) in its corner frame
+		const bool bUpstream = Now - UwbQualityTime > 3.0;
+		S += FString::Printf(TEXT("\n  UWB 원 좌표 (%.2f, %.2f, %.2f) m%s"), UwbRaw.X, UwbRaw.Y, UwbRaw.Z, bUpstream ? TEXT(" · Apeficiation 게이트웨이 형식") : TEXT(""));
+		if (!UwbMarkStatus.IsEmpty()) S += TEXT("\n  ") + UwbMarkStatus;
+		else if (bUpstream && !UwbMarks.bValid) S += TEXT("\n  ⚠ 스캔과 좌표 맞추기: 태그를 바닥 A 위에 두고 7, B 위에 두고 8");
+	}
 	if (!RelayStatus.IsEmpty())
 	{
 		TArray<double> R = RelayRtt; R.Sort();
@@ -1268,6 +1359,9 @@ void APhoneTwinScanActor::TickCollisionFile(float DeltaSeconds)
 		}
 	}
 	if (LoadedScanId.IsEmpty()) return;
+	if (bTrace && bEspFromOsc)
+		UE_LOG(LogPhoneTwin, Log, TEXT("trace uwb raw (%.3f, %.3f, %.3f) m -> room (%.3f, %.3f, %.3f) m yaw %.0f%s, tracking %d"), UwbRaw.X, UwbRaw.Y, UwbRaw.Z,
+			EspPose.X, EspPose.Y, EspPose.Z, EspPose.Yaw, UwbMarks.bValid ? TEXT(" (A·B marks)") : TEXT(""), bTracking ? 1 : 0);
 	if (bTrace && bTracking)
 		for (int32 i = 0; i < Objects.Num() && i < Sounds.Num(); i++)
 			UE_LOG(LogPhoneTwin, Log, TEXT("trace %s: floor %.1f cm, hand %.1f cm, gain %.3f, near %s"), *Objects[i].Name, Objects[i].FloorD, Objects[i].HandD, Sounds[i].Gain,
