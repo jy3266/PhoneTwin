@@ -33,7 +33,7 @@ const errors = [];
 async function openPage(ctx, mobile) {
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(String(e))); if (process.env.DBG) page.on('console', (m) => console.log('  console', m.type(), m.text().slice(0, 200)));
-  page.on('console', (m) => { if (m.type() === 'error' && !/favicon|ERR_CONNECTION_REFUSED|404|401/.test(m.text())) errors.push(m.text()); });
+  page.on('console', (m) => { if (m.type() === 'error' && !/favicon|ERR_CONNECTION_REFUSED|404|401|409/.test(m.text())) errors.push(m.text()); });
   if (mobile) await page.emulate({ viewport: { width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 1 }, userAgent: 'Mozilla/5.0 (iPhone) Mobile' });
   else await page.setViewport({ width: 1280, height: 800 });
   await page.goto(`http://127.0.0.1:${WEB}/immersive.html?relay=ws://127.0.0.1:${RELAY}&room=${ROOM}#${SCAN}`, { waitUntil: 'domcontentloaded' });
@@ -69,6 +69,7 @@ try {
   await A.waitForFunction(() => document.getElementById('gate').dataset.mode === 'again' && !document.getElementById('gate').classList.contains('hidden'), { timeout: 8000 });
   s = await st(A);
   check('ending shows the summary', /흔적이 남았습니다/.test(s.msg), s.msg);
+  check('after ending: no "start again", only a new id or browsing', await A.evaluate(() => document.getElementById('gateAgain').hidden && !document.getElementById('gateSwitch').hidden && document.getElementById('gateSwitch').classList.contains('primary')));
   await A.click('#gateLook'); await sleep(1500);
   s = await st(A);
   check('saved web trail comes back from the server as mine', s.n === 1 && s.layers.webMine > 20 && s.layers.web === 0, s);
@@ -120,6 +121,19 @@ try {
   await C.type('#gateId', '하늘'); await C.type('#gatePin', '0000'); await C.click('#gateForm button[type=submit]'); await sleep(1200);
   s = await st(C);
   check('wrong PIN for an existing id is refused with a message', s.gate && !s.sid && /비밀번호가 맞지 않습니다/.test(s.msg), s.msg);
+  await C.$eval('#gatePin', (e) => { e.value = ''; }); await C.type('#gatePin', '4321'); await C.click('#gateForm button[type=submit]'); await sleep(1200);
+  s = await st(C);
+  check('a finished id cannot sign in again (right PIN too)', s.gate && !s.sid && /이미 체험을 마쳤습니다/.test(s.msg), s.msg);
+  // A (finished, still in the tab) presses the chip's start: told to make a new id; that button opens an empty sign-in
+  await A.click('#chipStart'); await sleep(300);
+  s = await st(A);
+  check('finished visitor pressing start is told to make a new id', s.gate && s.mode === 'again' && /새 아이디/.test(s.msg) && !s.sid, s);
+  await A.click('#gateSwitch'); await sleep(200);
+  s = await st(A);
+  check('"새 아이디로 체험하기" opens an empty sign-in', s.mode === 'login' && (await A.$eval('#gateId', (e) => e.value)) === '', s);
+  await A.type('#gateId', '별빛2'); await A.type('#gatePin', '1111'); await A.click('#gateForm button[type=submit]');
+  await A.waitForFunction(() => window.__immersive.trails.state.sid, { timeout: 8000 });
+  check('a new id starts a new experience', (await st(A)).id === '별빛2');
 
   // ---------------- relay without the trail API: browse without recording
   const D = await (await browser.createBrowserContext()).newPage();

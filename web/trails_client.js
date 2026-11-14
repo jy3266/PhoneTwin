@@ -18,7 +18,7 @@ export function createTrails(o) {
     const r = await fetch(`${st.api}/trails/${op}`, { method: 'POST', body: JSON.stringify({ token: st.token, ...body }), headers: { 'Content-Type': 'application/json' } });
     const j = await r.json().catch(() => ({}));
     if (r.status === 401 && op !== 'login') { signedOut('다시 로그인해 주세요 (서버가 다시 시작되었습니다)'); throw new Error('401'); }
-    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    if (!r.ok) throw Object.assign(new Error(j.error || `HTTP ${r.status}`), { status: r.status });
     return j;
   }
   function beacon(op, body) {
@@ -33,11 +33,13 @@ export function createTrails(o) {
     gate.dataset.mode = mode;   // login | again | offline
     msg.textContent = text || '';
     $('gateAgainName').textContent = st.id || '';
+    $('gateAgain').hidden = !!st.done;   // one experience per id
+    $('gateSwitch').classList.toggle('primary', !!st.done);
     if (mode === 'login') setTimeout(() => ($('gateId').value ? $('gatePin') : $('gateId')).focus(), 50);
   }
   function hideGate() { gate.classList.add('hidden'); document.body.classList.remove('gated'); }
   function signedOut(text) {
-    st.token = null; st.sid = null;
+    st.token = null; st.sid = null; st.done = false;
     try { sessionStorage.removeItem('ptTrailToken'); } catch (e) { /* storage blocked */ }
     updateChip(); showGate('login', text);
   }
@@ -48,20 +50,20 @@ export function createTrails(o) {
     msg.textContent = '확인 중…';
     try {
       const j = await call('login', { id, pin });
-      st.token = j.token; st.id = j.id;
+      st.token = j.token; st.id = j.id; st.done = false;
       try { sessionStorage.setItem('ptTrailToken', j.token); sessionStorage.setItem('ptTrailUser', j.id); localStorage.setItem('ptTrailId', j.id); } catch (err) { /* storage blocked */ }
       $('gatePin').value = '';
-      o.toast(j.created ? `반갑습니다, ${j.id} 님 · 새 아이디가 만들어졌습니다` : `다시 오셨네요, ${j.id} 님`);
+      o.toast(j.created ? `반갑습니다, ${j.id} 님 · 새 아이디가 만들어졌습니다` : `${j.id} 님, 체험을 시작합니다`);
       await startExperience();
     } catch (err) { msg.textContent = err.message === '401' ? '' : err.message; }
   });
   $('gatePin').addEventListener('input', (e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); });
   $('gateAgain').addEventListener('click', () => startExperience());
-  $('gateSwitch').addEventListener('click', () => signedOut(''));
+  $('gateSwitch').addEventListener('click', () => { $('gateId').value = ''; $('gatePin').value = ''; signedOut('새 아이디와 비밀번호(숫자 4개)를 정해 주세요'); });
   $('gateLook').addEventListener('click', () => { hideGate(); st.ended = 'look'; updateChip(); });
   $('gateOffline').addEventListener('click', () => { hideGate(); st.ended = 'offline'; updateChip(); });
   $('endBtn').addEventListener('click', () => endExperience(true));
-  $('chipStart').addEventListener('click', () => (st.token ? startExperience() : showGate('login')));
+  $('chipStart').addEventListener('click', () => (st.done ? showGate('again', '이 아이디의 체험은 끝났습니다. 다시 하려면 새 아이디를 만들어 주세요.') : st.token ? startExperience() : showGate('login')));
 
   // ------------------------------------------------------------ an experience: start, record, end
   async function startExperience() {
@@ -71,7 +73,15 @@ export function createTrails(o) {
       Object.assign(st, { sid: j.sid, kind, scan, t0: performance.now(), buf: [], last: null, lastSend: performance.now(), myLocal: [], kindWant: null, ended: null });
       hideGate(); updateChip();
       o.toast(kind === 'site' ? '체험 시작 · 현장의 실제 움직임이 푸른 빛으로 남습니다' : '체험 시작 · 걷는 길이 보라 빛으로 남습니다');
-    } catch (err) { if (err.message !== '401') showGate('login', `시작하지 못했습니다: ${err.message}`); }
+    } catch (err) {
+      if (err.message === '401') return;
+      if (err.status === 409) { markDone(); showGate('again', err.message); } else showGate('login', `시작하지 못했습니다: ${err.message}`);
+    }
+  }
+  function markDone() {
+    st.done = true;
+    try { localStorage.removeItem('ptTrailId'); } catch (e) { /* storage blocked */ }
+    $('gateId').value = '';
   }
   async function endExperience(byUser) {
     if (!st.sid) return;
@@ -79,8 +89,11 @@ export function createTrails(o) {
     await flush();
     st.sid = null; updateChip();
     try {
-      const j = await call('end', { sid });
-      if (byUser) showGate('again', `${kind === 'site' ? '현장' : '웹'} 체험 ${fmt(secs)} · ${j.kept ? '흔적이 남았습니다' : '너무 짧아 흔적이 남지 않았습니다'}`);
+      const j = await call('end', { sid, final: !!byUser });
+      if (byUser) {
+        markDone();
+        showGate('again', `${kind === 'site' ? '현장' : '웹'} 체험 ${fmt(secs)} · ${j.kept ? '흔적이 남았습니다' : '너무 짧아 흔적이 남지 않았습니다'}. 체험은 아이디 하나에 한 번입니다 — 다시 하려면 새 아이디를 만들어 주세요.`);
+      }
     } catch (err) { if (byUser && err.message !== '401') showGate('again', `끝내기 실패: ${err.message}`); }
     st.myLocal = []; refresh();
   }
@@ -132,7 +145,7 @@ export function createTrails(o) {
     const chip = $('expChip');
     chip.dataset.state = st.sid ? st.kind : 'idle';
     $('chipText').textContent = st.sid ? `${st.id} · ${st.kind === 'site' ? '현장 체험 중 (푸른 빛)' : '웹 체험 중 (보라 빛)'}` :
-      st.ended === 'offline' ? '기록 없이 보는 중' : st.token ? `${st.id} · 체험 전` : '로그인 전';
+      st.ended === 'offline' ? '기록 없이 보는 중' : st.token ? `${st.id} · ${st.done ? '체험 끝' : '체험 전'}` : '로그인 전';
     $('endBtn').hidden = !st.sid; $('chipStart').hidden = !!st.sid || st.ended === 'offline';
   }
   setInterval(() => { if (st.sid) $('chipTime').textContent = fmt((performance.now() - st.t0) / 1000); else $('chipTime').textContent = ''; }, 500);
@@ -261,9 +274,11 @@ export function createTrails(o) {
     st.ready = ok;
     if (!ok) { showGate('offline', '흔적 서버(릴레이)가 아직 이 기능을 지원하지 않거나 연결되지 않았습니다.'); updateChip(); return; }
     refresh();
-    if (st.token) {   // same tab, still signed in: offer to go on
-      try { await call('add', { sid: 'none' }); } catch (e) { if (e.message === '401') return; }
-      showGate('again', `${st.id} 님, 다시 체험할까요?`);
+    if (st.token) {   // same tab, still signed in: go on only if this id has not finished its one experience
+      let me = null;
+      try { me = await call('me', {}); } catch (e) { if (e.message === '401') return; }
+      if (me && me.done) { markDone(); showGate('again', `${st.id} 님의 체험은 끝났습니다. 다시 하려면 새 아이디를 만들어 주세요.`); }
+      else showGate('again', `${st.id} 님, 체험을 시작할까요?`);
     } else showGate('login');
     updateChip();
   }

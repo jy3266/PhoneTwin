@@ -144,13 +144,16 @@ wss://<앱 주소>/ws?room=<방 이름>&role=<phone|esp32|unreal|viewer>&key=<RE
 
 | 요청 | 본문 / 쿼리 | 응답 |
 |---|---|---|
-| `POST /trails/login` | `{id, pin}` — 아이디 글자·숫자·`_.-` 1~20자, pin 숫자 4개. 없는 아이디면 새로 만듦 | `{ok, token, id, created}` · 틀리면 401(5번 틀리면 10분 잠금, 429) |
-| `POST /trails/start` | `{token, scan, kind: "site"\|"web", room}` | `{ok, sid, kind}` |
+| `POST /trails/login` | `{id, pin}` — 아이디 글자·숫자·`_.-` 1~20자, pin 숫자 4개. 없는 아이디면 새로 만듦 | `{ok, token, id, created}` · 틀리면 401(5번 틀리면 10분 잠금, 429) · **이미 체험한 아이디는 409** |
+| `POST /trails/start` | `{token, scan, kind: "site"\|"web", room}` | `{ok, sid, kind}` · 체험을 끝낸 아이디는 409 |
 | `POST /trails/add` | `{token, sid, pts: [[x,y,z], …]}` — 웹 걷기만 점을 보냄(방 좌표 R, m, 페이지가 3초마다). 현장은 점 없이 보내도 됨(그 걷기를 "내 것"으로 표시·유지) | `{ok, n}` |
-| `POST /trails/end` | `{token, sid}` | `{ok, kept}` (점 5개 미만 또는 0.5 m 미만이면 저장 안 함) |
+| `POST /trails/end` | `{token, sid, final}` — `final:false` = 같은 방문이 이어짐(현장↔웹 전환, 다른 스캔). 없거나 true면 **그 아이디의 체험 끝** | `{ok, kept}` (점 5개 미만 또는 0.5 m 미만이면 저장 안 함) |
+| `POST /trails/me` | `{token}` | `{ok, id, used, done}` |
+| `POST /trails/admin` | `{key, action:"delete", ids:[…]}` 그 아이디와 그 사람만 가진 흔적 삭제 · `{key, action:"reset"}` 전부 삭제. key = 서버의 `TRAILS_ADMIN_KEY`(없으면 `RELAY_KEY`) | `{ok, accounts, trails}` · 키가 틀리면 403 |
 | `GET /trails?scan=<id>&token=<선택>` | | `{ok, id, trails: [{kind, live, mine, t0, t1, pts}]}` — 다른 사람 아이디는 주지 않음 |
 | `GET /trails/status` | | `{ok, trails, visitors, sessions, siteWalks, backup: {configured, last, error}}` |
 
+- **체험은 아이디 하나에 한 번**(2026-11-14): 첫 `start`에서 `used`, `end`(final)·창 닫기(sendBeacon)·2분 동안 아무 신호 없음에서 `done`. `used`인 아이디는 다시 로그인할 수 없고(409), 다시 하려면 새 아이디를 만듭니다. 한 번의 방문 안에서 페이지가 자동으로 다시 시작하는 것(현장↔웹, 스캔 변경)은 `final:false`라 같은 체험입니다.
 - 현장 걷기: 언리얼의 PTU1 `valid=1`이 시작, `valid=0` 또는 5초 끊김이 끝. `scanId`가 바뀌어도 새 걷기. 그동안 `kind=site`로 체험 중인 로그인 사용자 모두가 주인으로 기록됩니다.
 - 점은 4 cm 이상 움직였거나 1초가 지났을 때만 남깁니다(흔적 하나 최대 4000점, 전체 최대 3000개).
 - 비밀번호는 scrypt 해시로만 저장. 토큰은 서버 메모리에만 있고 12시간 동안 쓰지 않으면 만료(서버를 다시 켜면 다시 로그인).

@@ -21,6 +21,8 @@ const MAX_TRAILS = 3000, MAX_POINTS = 4000, MIN_POINTS = 5, MIN_PATH_M = 0.5;
 const STEP_M = 0.04, STEP_S = 1.0;                 // keep a point when moved 4 cm, or once a second while standing
 const SITE_GAP_S = 5, WEB_IDLE_S = 120, TOKEN_S = 12 * 3600;
 const ID_RE = /^[\p{L}\p{N}_.\-]{1,20}$/u, PIN_RE = /^\d{4}$/;
+const USED_MSG = '이 아이디는 이미 체험을 마쳤습니다. 다시 체험하려면 새 아이디를 만들어 주세요';
+const ADMIN_KEY = process.env.TRAILS_ADMIN_KEY || process.env.RELAY_KEY || '';   // POST /trails/admin (delete records)
 
 let db = { v: 1, accounts: {}, trails: [] };
 let dirty = false, saveTimer = null, ghSha = null, ghDirty = false, ghBusy = false;
@@ -125,6 +127,7 @@ function login(id, pin) {
     return { status: 401, error: n >= 5 ? '비밀번호를 5번 틀려 10분 동안 잠겼습니다' : `이미 있는 아이디입니다. 비밀번호가 맞지 않습니다 (${n}/5)` };
   }
   failures.delete(k);
+  if (!created && acc.used) return { status: 409, error: USED_MSG };   // one experience per id: a new visit needs a new id
   const token = newId(24);
   tokens.set(token, { id: acc.id, k, at: now() });
   return { status: 200, body: { ok: true, token, id: acc.id, created } };
@@ -174,7 +177,16 @@ function onUnrealLine(room, line) {
 }
 function endSite(room) { const w = siteWalks.get(room); if (!w) return; siteWalks.delete(room); keep(w); }
 
+/** An id's one experience is over: it can neither start again nor sign in again. */
+function finish(k) {
+  const acc = db.accounts[k];
+  if (acc && !acc.done) { acc.done = new Date().toISOString(); markDirty(); }
+}
 function start(tok, body) {
+  const acc = db.accounts[tok.k];
+  if (!acc) return { status: 401, error: '다시 로그인해 주세요' };
+  if (acc.done) return { status: 409, error: USED_MSG };
+  if (!acc.used) { acc.used = new Date().toISOString(); markDirty(); }
   const kind = body.kind === 'site' ? 'site' : 'web';
   const scan = String(body.scan || '').slice(0, 80), room = String(body.room || 'arko').slice(0, 64);
   const s = { sid: newId(8), kind, owner: tok.k, scan, room, pts: [], t0: now(), last: now(), lastPt: 0 };
@@ -194,6 +206,7 @@ function end(tok, body) {
   const s = sessions.get(body.sid);
   if (!s || s.owner !== tok.k) return { status: 404, error: '체험이 없습니다' };
   sessions.delete(s.sid);
+  if (body.final !== false) finish(tok.k);   // final:false = the page goes on with the same visit (site ↔ web, another scan)
   if (s.kind === 'web') return { ok: true, kept: keep(s) };
   return { ok: true, kept: true };   // site points belong to the walk Unreal reports; the claim stays on it
 }
@@ -204,6 +217,41 @@ function view(tok, scan) {
   for (const w of siteWalks.values()) if ((!scan || w.scan === scan) && w.pts.length > 1) list.push(out(w, true));
   for (const s of sessions.values()) if (s.kind === 'web' && (!scan || s.scan === scan) && s.pts.length > 1) list.push(out(s, true));
   return { ok: true, id: tok ? tok.id : null, trails: list };
+}
+
+// ---------------------------------------------------------------- admin: delete records (key = TRAILS_ADMIN_KEY or RELAY_KEY)
+function sameSecret(a, b) {
+  const h = (s) => crypto.createHash('sha256').update(String(s)).digest();
+  return crypto.timingSafeEqual(h(a), h(b));
+}
+/** {key, action:'reset'} forgets every visitor and trail; {key, action:'delete', ids:[...]} removes those visitors
+ *  and every trail only they owned (a site walk someone else also claimed stays, without them). */
+function admin(body) {
+  if (!ADMIN_KEY || typeof body.key !== 'string' || !sameSecret(body.key, ADMIN_KEY)) return { status: 403, error: 'forbidden' };
+  if (body.action === 'reset') {
+    const out = { ok: true, accounts: Object.keys(db.accounts).length, trails: db.trails.length + siteWalks.size };
+    db = { v: 1, accounts: {}, trails: [] };
+    tokens.clear(); sessions.clear(); siteWalks.clear(); failures.clear();
+    markDirty(); console.log('trails: admin reset', out);
+    return out;
+  }
+  if (body.action === 'delete' && Array.isArray(body.ids)) {
+    const set = new Set(body.ids.filter((x) => typeof x === 'string').map((x) => keyOf(x.trim())));
+    let accounts = 0;
+    for (const k of set) if (db.accounts[k]) { delete db.accounts[k]; accounts++; }
+    for (const [t, v] of tokens) if (set.has(v.k)) tokens.delete(t);
+    for (const [sid, s] of sessions) if (set.has(s.owner)) sessions.delete(sid);
+    for (const w of siteWalks.values()) for (const k of set) w.owners.delete(k);
+    const before = db.trails.length;
+    db.trails = db.trails.filter((t) => {
+      const owners = t.owners || [], left = owners.filter((k) => !set.has(k));
+      t.owners = left;
+      return !(owners.length && !left.length);
+    });
+    markDirty(); console.log('trails: admin delete', accounts, 'visitors');
+    return { ok: true, accounts, trails: before - db.trails.length };
+  }
+  return { status: 400, error: 'action: reset | delete' };
 }
 
 // ---------------------------------------------------------------- HTTP
@@ -240,8 +288,14 @@ function handle(req, res) {
       const r = login(body.id, body.pin);
       return send(res, r.status, r.body || { error: r.error });
     }
+    if (op === 'admin') {
+      if (limited(ip, 'admin', 10, 60)) return send(res, 429, { error: '잠시 뒤에 다시' });
+      const r = admin(body);
+      return send(res, r.status || 200, r.status ? { error: r.error } : r);
+    }
     const tok = who(body.token);
     if (!tok) return send(res, 401, { error: '다시 로그인해 주세요' });
+    if (op === 'me') { const acc = db.accounts[tok.k] || {}; return send(res, 200, { ok: true, id: tok.id, used: !!acc.used, done: !!acc.done }); }
     if (limited(ip, 'write', 300, 60)) return send(res, 429, { error: '잠시 뒤에 다시' });
     const r = op === 'start' ? start(tok, body) : op === 'add' ? add(tok, body) : op === 'end' ? end(tok, body) : { status: 404, error: 'not found' };
     return send(res, r.status || 200, r.status ? { error: r.error } : r);
@@ -253,7 +307,7 @@ function handle(req, res) {
 function tick() {
   const t = now();
   for (const [room, w] of siteWalks) if (t - w.last > SITE_GAP_S * 1000) endSite(room);
-  for (const s of sessions.values()) if (t - s.last > WEB_IDLE_S * 1000) { sessions.delete(s.sid); if (s.kind === 'web') keep(s); }
+  for (const s of sessions.values()) if (t - s.last > WEB_IDLE_S * 1000) { sessions.delete(s.sid); finish(s.owner); if (s.kind === 'web') keep(s); }
   for (const [k, v] of tokens) if (t - v.at > TOKEN_S * 1000) tokens.delete(k);
   for (const [k, v] of hits) if (t > v.reset) hits.delete(k);
 }

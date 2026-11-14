@@ -75,8 +75,13 @@ const stop = (c) => new Promise((r) => { c.on('exit', r); c.kill('SIGTERM'); });
     check('someone else cannot write to it', (await post('add', { token: b.token, sid: s.sid, pts })).status === 404);
     let v = await get({ scan: 'scanA', token: a.token });
     check('live web walk is visible while walking', v.trails.some((t) => t.kind === 'web' && t.live && t.mine));
-    check('end keeps it', (await post('end', { token: a.token, sid: s.sid })).kept === true);
+    check('end (same visit goes on) keeps it', (await post('end', { token: a.token, sid: s.sid, final: false })).kept === true);
     check('a 10 cm wiggle is not kept', await (async () => { const s2 = await post('start', { token: a.token, scan: 'scanA', kind: 'web' }); await post('add', { token: a.token, sid: s2.sid, pts: [[0, 0, 1], [0.05, 0, 1], [0.1, 0, 1]] }); return (await post('end', { token: a.token, sid: s2.sid })).kept === false; })());
+    // one experience per id
+    check('a finished id cannot start again', (await post('start', { token: a.token, scan: 'scanA', kind: 'web' })).status === 409);
+    check('a finished id cannot sign in again', (await post('login', { id: '하늘', pin: '1234' })).status === 409);
+    check('me says done', (await post('me', { token: a.token })).done === true);
+    check('a signed-in id that never started can still start', (await post('me', { token: b.token })).used === false);
 
     // a site walk reported by Unreal, claimed by a signed-in viewer
     const site = await post('start', { token: b.token, scan: 'scanA', kind: 'site' });
@@ -113,13 +118,22 @@ const stop = (c) => new Promise((r) => { c.on('exit', r); c.kill('SIGTERM'); });
     c = server(file); await up(c);
     check('restart keeps trails', (await get({ scan: 'scanA' })).trails.length === 2);
     check('old token is gone after a restart', (await post('start', { token: a.token, scan: 'scanA', kind: 'web' })).status === 401);
-    check('PIN still works after a restart', (await post('login', { id: '하늘', pin: '1234' })).status === 200);
+    check('finished id stays finished after a restart', (await post('login', { id: '하늘', pin: '1234' })).status === 409);
     await stop(c);
 
     // a new, empty container (App Platform redeploy): restores from the private repo
     c = server(path.join(tmp, 'fresh', 'trails.json')); await up(c); await sleep(300);
     check('empty server restores from the backup', (await get({ scan: 'scanA' })).trails.length === 2);
-    check('restored accounts keep their PIN', (await post('login', { id: '하늘', pin: '1234' })).status === 200 && (await post('login', { id: '하늘', pin: '4321' })).status === 401);
+    check('restored accounts keep their PIN and their one-time use', (await post('login', { id: '하늘', pin: '1234' })).status === 409 && (await post('login', { id: '하늘', pin: '4321' })).status === 401);
+    // admin: delete records
+    check('admin needs the key', (await post('admin', { key: 'nope', action: 'reset' })).status === 403);
+    const del = await post('admin', { key: KEY, action: 'delete', ids: ['하늘'] });
+    check('admin delete removes the visitor and their trail', del.accounts === 1 && del.trails === 1 && (await get({ scan: 'scanA' })).trails.length === 1, del);
+    check('deleted id can be made again', (await post('login', { id: '하늘', pin: '5555' })).created === true);
+    const rs = await post('admin', { key: KEY, action: 'reset' });
+    check('admin reset clears everything', rs.ok && (await get({})).trails.length === 0 && (await post('login', { id: 'other', pin: '0000' })).created === true, rs);
+    await sleep(1500);
+    check('the reset reaches the backup', JSON.parse(gh.content).trails.length === 0);
   } catch (e) { console.log('FAIL', e.stack || e.message); failed++; }
   try { await stop(c); } catch (e) { /* gone */ }
   fake.close();
