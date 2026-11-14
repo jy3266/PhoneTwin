@@ -106,6 +106,7 @@ bool FPhoneTwinPacketTest::RunTest(const FString&)
 	TestEqual(TEXT("PTH1 invalid"), MakePTH(11, false, 1, true, 3, 5), FString(TEXT("PTH1,11,0,255,1,3,-1\n")));
 	TestEqual(TEXT("PTU1"), MakePTU(12, true, TEXT("esp32"), FVector(1.5, -0.25, 1.2), 90, 3, 12.34, .5f), FString(TEXT("PTU1,12,1,esp32,1.500,-0.250,1.200,90.0,3,123,128\n")));
 	TestEqual(TEXT("PTU1 out of range"), MakePTU(13, true, TEXT("phone"), FVector::ZeroVector, 0, -1, -1, 0), FString(TEXT("PTU1,13,1,phone,0.000,0.000,0.000,0.0,-1,-1,0\n")));
+	TestEqual(TEXT("PTU1 with scan"), MakePTU(14, true, TEXT("phone"), FVector::ZeroVector, 0, -1, -1, 0, TEXT("phone_scan_1,x")), FString(TEXT("PTU1,14,1,phone,0.000,0.000,0.000,0.0,-1,-1,0,phone_scan_1_x\n")));
 
 	// OSC: "/a" + ",ifs" + int 1 + float 1.0 + "hi" — every part padded to 4 bytes, big-endian numbers
 	const TArray<uint8> Osc = FOscMessage(TEXT("/a")).Int(1).Float(1.f).Str(TEXT("hi")).Encode();

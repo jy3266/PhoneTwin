@@ -20,3 +20,11 @@ services:
         scope: RUN_TIME
         type: SECRET
         value: change-me
+      # visitor trails backup (PROTOCOL.md §3-1): a private repo + a fine-grained token with Contents read/write on it only
+      - key: TRAILS_GITHUB_REPO
+        scope: RUN_TIME
+        value: jy3266/phonetwin-trails
+      - key: TRAILS_GITHUB_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+        value: set-in-the-digitalocean-dashboard

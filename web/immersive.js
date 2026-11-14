@@ -10,6 +10,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { createTrails } from './trails_client.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
@@ -312,6 +313,7 @@ async function openScan(id) {
       fetch(`web_scans/${e.id}.collision.json?t=${Date.now()}`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]);
     showCloud(ply, m); setShapes(col); info.error = '';
+    trails.refresh();
     try { localStorage.setItem('ptImmersiveScan', id); } catch (err) { /* storage blocked */ }
     history.replaceState(null, '', `${location.search}#${encodeURIComponent(id)}`);
   } catch (err) { console.error(err); info.error = `불러오지 못했습니다: ${err.message}`; }
@@ -382,14 +384,20 @@ function onLine(line) {
 }
 
 let ws = null, wsState = '연결 안 됨';
-function connect() {
+function relayConfig() {
   const cfg = window.PHONETWIN_RELAY || {}, q = new URLSearchParams(location.search);
   let saved = null; try { saved = JSON.parse(localStorage.getItem('ptRelay') || 'null'); } catch (err) { saved = null; }
   let base = (q.get('relay') || (saved && saved.url) || cfg.url || '').trim();
   const room = q.get('room') || (saved && saved.room) || cfg.room || 'arko';
+  if (base) {
+    base = base.replace(/\/+$/, '').replace(/\/ws$/, '').replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
+    if (!/^wss?:\/\//.test(base)) base = 'wss://' + base;
+  }
+  return { base, room };
+}
+function connect() {
+  const { base, room } = relayConfig();
   if (!base) { wsState = '릴레이 주소 없음'; return; }
-  base = base.replace(/\/+$/, '').replace(/\/ws$/, '').replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
-  if (!/^wss?:\/\//.test(base)) base = 'wss://' + base;
   try { ws = new WebSocket(`${base}/ws?room=${encodeURIComponent(room)}&role=viewer`); } catch (err) { wsState = '주소 오류'; return; }
   wsState = '접속 중…';
   const mine = ws;
@@ -583,7 +591,7 @@ cv.addEventListener('pointerup', (e) => {
   if (hit) { walker.target = hit.setY(walker.pos.y); walker.until = performance.now() + 15000; }
 });
 addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+  if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || document.body.classList.contains('gated')) return;
   const k = e.key.toLowerCase();
   if (k === 'f') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); return; }
   if (k === 'h') { document.body.classList.toggle('hide-ui'); return; }
@@ -657,6 +665,8 @@ function frame() {
   for (const w of uniforms.uWave.value) if (w.w < 99) w.w += dt;
   if ((touchAcc += dt) > 1 / 15) { touchAcc = 0; checkTouches(p, now); }
 
+  trails.tick(p, now); trails.frame(dt, uniforms.uScale.value);
+
   me.position.copy(p); pool.position.set(p.x, floorY + 0.01, p.z);
   pool.scale.setScalar(uniforms.uRadius.value * 1.4);
   me.visible = opts.showMe && opts.camMode !== 'first'; pool.visible = opts.showMe; dust.visible = opts.showMe;
@@ -697,9 +707,19 @@ setInterval(() => {
 릴레이: ${wsState}${live.peers ? ' · ' + live.peers : ''} · 언리얼 ${age(live.unrealAt)}${live.unrealAt && !live.unrealValid ? '(걷기 테스트 전)' : ''} · 휴대폰 ${age(live.phoneAt)} · UWB ${age(live.espAt)}`;
 }, 300);
 
+// ---------------------------------------------------------------- visitors' trails of light (sign in, start, end)
+// on-site = the real person the system tracks (blue), web = walking here in the browser (purple)
+const trails = createTrails({
+  scene, $, toast, roomToScan, room: relayConfig().room,
+  getMeta: () => meta, getFloorY: () => floorY, getScan: () => info.scan,
+  isSite: () => systemOn(performance.now()),
+  apiBase: () => relayConfig().base.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://'),
+});
+
 new ResizeObserver(resize).observe(stage);
 resize();
 renderer.setAnimationLoop(frame);
-window.__immersive = { camera, gyro, look, info, touch, get systemOn() { return systemOn(performance.now()); }, onLine, setHand, uniforms, butterfly, wings, walker, me, get shapes() { return shapes; }, startWave };   // for automated checks
+window.__immersive = { camera, gyro, look, info, touch, get systemOn() { return systemOn(performance.now()); }, onLine, setHand, uniforms, butterfly, wings, walker, me, get shapes() { return shapes; }, startWave, trails };   // for automated checks
 loadIndex();
+trails.boot();
 if ((window.PHONETWIN_RELAY || {}).auto !== false) connect();

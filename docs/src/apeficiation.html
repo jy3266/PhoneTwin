@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Apeficiation 연동 사용법·빌드</title>
+<style>
+@page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+:root {
+  --ink: #0F1A2B; --sub: #4A5768; --line: #D5DCE5; --soft: #F3F6F9;
+  --accent: #0B6E8C; --accent-soft: #E3F2F6; --warm: #B4530B; --warm-soft: #FBEFE4;
+  --ok: #1E7A45; --ok-soft: #E5F4EA; --code: #F5F7FA;
+}
+* { box-sizing: border-box; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body { font-family: "Malgun Gothic", sans-serif; color: var(--ink); font-size: 9.6pt; line-height: 1.55; margin: 0; background: #fff; }
+h1 { font-size: 22pt; line-height: 1.3; margin: 0 0 6pt; letter-spacing: -0.5pt; }
+h2 { font-size: 14.5pt; margin: 0 0 8pt; padding-bottom: 4pt; border-bottom: 2px solid var(--accent); color: var(--accent); break-after: avoid; }
+h3 { font-size: 11.5pt; margin: 14pt 0 5pt; break-after: avoid; }
+p { margin: 0 0 7pt; }
+ul, ol { margin: 0 0 8pt; padding-left: 17pt; }
+li { margin-bottom: 2.5pt; }
+section { break-before: auto; margin-top: 16pt; }
+section.first { margin-top: 0; }
+section.p { break-before: page; margin-top: 0; }
+.keep { break-inside: avoid; }
+h3 + table, h3 + p, h3 + figure, h3 + ol, h3 + ul { break-before: avoid; }
+code, pre, .mono { font-family: Consolas, "Malgun Gothic", monospace; font-size: 8.8pt; }
+code { background: var(--code); padding: 0 3pt; border-radius: 3px; }
+pre { background: var(--code); border: 1px solid var(--line); border-radius: 5px; padding: 7pt 9pt; margin: 0 0 9pt; white-space: pre-wrap; line-height: 1.5; break-inside: avoid; }
+pre .c { color: #6B7785; }
+table { width: 100%; border-collapse: collapse; margin: 0 0 9pt; font-size: 8.8pt; break-inside: auto; }
+th, td { border: 1px solid var(--line); padding: 3pt 5pt; vertical-align: top; text-align: left; }
+th { background: var(--soft); font-weight: bold; }
+tr { break-inside: avoid; }
+td.num, th.num { text-align: right; white-space: nowrap; }
+.box { border-radius: 6px; padding: 8pt 11pt; margin: 0 0 10pt; break-inside: avoid; }
+.box.info { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+.box.warn { background: var(--warm-soft); border-left: 4px solid var(--warm); }
+.box.ok { background: var(--ok-soft); border-left: 4px solid var(--ok); }
+.box p:last-child, .box ul:last-child, .box ol:last-child { margin-bottom: 0; }
+.box b.t { display: block; margin-bottom: 3pt; }
+.cover { padding-top: 34mm; }
+.kicker { color: var(--accent); font-weight: bold; letter-spacing: 1pt; font-size: 10pt; margin-bottom: 8pt; }
+.lead { font-size: 11.5pt; color: var(--sub); margin-bottom: 18pt; }
+.meta { color: var(--sub); font-size: 9.5pt; margin-bottom: 26pt; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8pt; margin-bottom: 12pt; }
+.card { border: 1px solid var(--line); border-radius: 6px; padding: 8pt 10pt; }
+.card .n { font-size: 17pt; font-weight: bold; color: var(--accent); line-height: 1.2; }
+.card .l { font-size: 8.8pt; color: var(--sub); }
+.steps { counter-reset: s; list-style: none; padding-left: 0; }
+.steps > li { counter-increment: s; position: relative; padding-left: 26pt; margin-bottom: 7pt; break-inside: avoid; }
+.steps > li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 18pt; height: 18pt; border-radius: 50%; background: var(--accent); color: #fff; font-weight: bold; font-size: 9pt; text-align: center; line-height: 18pt; }
+.key { display: inline-block; min-width: 14pt; padding: 0 4pt; border: 1px solid #9AA6B4; border-bottom-width: 2px; border-radius: 3px; background: #fff; font-family: Consolas, monospace; font-size: 8.8pt; text-align: center; line-height: 1.35; }
+figure { margin: 4pt 0 12pt; break-inside: avoid; }
+figcaption { font-size: 8.6pt; color: var(--sub); margin-top: 3pt; text-align: center; }
+svg text { font-family: "Malgun Gothic", sans-serif; }
+.toc { columns: 2; column-gap: 18pt; font-size: 9.6pt; padding-left: 15pt; }
+.small { font-size: 8.8pt; color: var(--sub); }
+.tag { display: inline-block; font-size: 8pt; padding: 0 5pt; border-radius: 9pt; background: var(--soft); border: 1px solid var(--line); color: var(--sub); }
+.tag.real { background: var(--ok-soft); border-color: #A9D5B8; color: var(--ok); }
+.tag.fake { background: var(--warm-soft); border-color: #EBC49F; color: var(--warm); }
+</style>
+</head>
+<body>
+
+<!-- ======================================================================= 표지 -->
+<section class="first cover">
+  <div class="kicker">PHONE TWIN v4 · UWB 연동 문서</div>
+  <h1>Apeficiation UWB → 라즈베리파이 → 언리얼<br>연동 사용법과 빌드 정리</h1>
+  <p class="lead">팀 저장소 <b>gwsylvia/Apeficiation</b>(UWB 앵커 4개 + 태그 + 파이 게이트웨이)를 고치지 않고 언리얼 ARKO_PROJECT에 연결하는 방법, 하드웨어 없이 시험하는 방법, 그리고 이번에 바꾼 언리얼 플러그인의 내부 구조와 빌드·검증 결과를 한 문서로 정리했습니다.</p>
+  <div class="meta">작성 2026-11-12 · 대상 커밋: Apeficiation <code>5ef05a3</code>(2026-11-04) · PhoneTwin <code>6139040</code></div>
+
+  <div class="grid3">
+    <div class="card"><div class="n">0줄</div><div class="l">원본 Apeficiation 코드에서 고친 줄 수.<br>언리얼이 원본 형식을 그대로 받음</div></div>
+    <div class="card"><div class="n">7 · 8</div><div class="l">언리얼에서 누르는 키 두 개로<br>원본 좌표를 스캔 좌표에 맞춤</div></div>
+    <div class="card"><div class="n">6가지</div><div class="l">하드웨어 없이 재현하는 상황<br>(잡음·미보정·가림·반사·평평 배치)</div></div>
+  </div>
+
+  <div class="box info">
+    <b class="t">한 줄 요약</b>
+    <p>파이의 <code>pi_gateway.py</code>가 OSC <code>/tag/position [x, y, z]</code>(cm)를 언리얼 <b>UDP 8000</b>으로 보내면, 언리얼은 이를 입력 <b>[2] UWB 태그</b>로 받아 사물과의 거리·소리·물결을 계산합니다. 원본 좌표는 “앵커 1이 있는 방 모서리” 기준이라, 태그를 스캔 바닥의 A·B 위에 두고 <span class="key">7</span> <span class="key">8</span>을 한 번씩 눌러 스캔 좌표에 맞춥니다.</p>
+  </div>
+
+  <h3>차례</h3>
+  <ol class="toc">
+    <li>한눈에 보기</li>
+    <li>Apeficiation 저장소 분석</li>
+    <li>사용법 A — 하드웨어 없이 시험</li>
+    <li>사용법 B — 실제 장비 연결</li>
+    <li>기술 — 언리얼이 OSC를 받는 방식</li>
+    <li>기술 — 시뮬레이터 구조</li>
+    <li>빌드와 검증 결과</li>
+    <li>문제 해결</li>
+    <li>남은 확인과 다음 할 일</li>
+  </ol>
+</section>
+
+<!-- ======================================================================= 1 -->
+<section class="p">
+  <h2>1. 한눈에 보기</h2>
+  <figure>
+    <svg viewBox="0 0 680 300" width="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0B6E8C"/></marker>
+        <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8894A3"/></marker>
+      </defs>
+      <!-- tag -->
+      <rect x="10" y="40" width="110" height="64" rx="8" fill="#E3F2F6" stroke="#0B6E8C"/>
+      <text x="65" y="64" text-anchor="middle" font-size="13" font-weight="bold" fill="#0F1A2B">태그</text>
+      <text x="65" y="81" text-anchor="middle" font-size="10" fill="#4A5768">관객 착용 · XIAO</text>
+      <text x="65" y="95" text-anchor="middle" font-size="10" fill="#4A5768">+ DWM1000 + 모터 5</text>
+      <!-- anchors -->
+      <rect x="165" y="20" width="120" height="104" rx="8" fill="#fff" stroke="#0B6E8C"/>
+      <text x="225" y="42" text-anchor="middle" font-size="13" font-weight="bold" fill="#0F1A2B">앵커 1 ~ 4</text>
+      <text x="225" y="60" text-anchor="middle" font-size="10" fill="#4A5768">방 네 모서리 근처</text>
+      <text x="225" y="76" text-anchor="middle" font-size="10" fill="#4A5768">태그와 거리 측정</text>
+      <text x="225" y="94" text-anchor="middle" font-size="10" fill="#4A5768">USB로 한 줄씩 출력</text>
+      <text x="225" y="112" text-anchor="middle" font-size="9" fill="#4A5768" font-family="Consolas">R,스윕,앵커,거리,세기</text>
+      <line x1="120" y1="72" x2="163" y2="72" stroke="#0B6E8C" stroke-width="2" marker-end="url(#ar)" marker-start="url(#ar)"/>
+      <text x="142" y="64" text-anchor="middle" font-size="10" fill="#0B6E8C">UWB</text>
+      <!-- pi -->
+      <rect x="325" y="30" width="135" height="84" rx="8" fill="#E3F2F6" stroke="#0B6E8C"/>
+      <text x="392" y="54" text-anchor="middle" font-size="13" font-weight="bold" fill="#0F1A2B">라즈베리파이</text>
+      <text x="392" y="72" text-anchor="middle" font-size="10" fill="#4A5768" font-family="Consolas">pi_gateway.py</text>
+      <text x="392" y="88" text-anchor="middle" font-size="10" fill="#4A5768">4개 모아 위치 계산</text>
+      <text x="392" y="103" text-anchor="middle" font-size="10" fill="#4A5768">필터 · 평활</text>
+      <line x1="285" y1="72" x2="323" y2="72" stroke="#0B6E8C" stroke-width="2" marker-end="url(#ar)"/>
+      <text x="304" y="64" text-anchor="middle" font-size="10" fill="#0B6E8C">USB×4</text>
+      <!-- unreal -->
+      <rect x="532" y="20" width="140" height="104" rx="8" fill="#0B6E8C"/>
+      <text x="602" y="44" text-anchor="middle" font-size="13" font-weight="bold" fill="#fff">언리얼</text>
+      <text x="602" y="61" text-anchor="middle" font-size="10" fill="#DDF1F6">PhoneTwinLink 플러그인</text>
+      <text x="602" y="78" text-anchor="middle" font-size="10" fill="#DDF1F6">입력 [2] UWB 태그</text>
+      <text x="602" y="95" text-anchor="middle" font-size="10" fill="#DDF1F6">A·B 맞춤 (7 · 8)</text>
+      <text x="602" y="112" text-anchor="middle" font-size="10" fill="#DDF1F6">거리 · 소리 · 물결</text>
+      <line x1="460" y1="72" x2="530" y2="72" stroke="#0B6E8C" stroke-width="2" marker-end="url(#ar)"/>
+      <text x="496" y="57" text-anchor="middle" font-size="9.5" fill="#0B6E8C">OSC</text>
+      <text x="496" y="68" text-anchor="middle" font-size="9.5" fill="#0B6E8C">UDP 8000</text>
+      <text x="496" y="88" text-anchor="middle" font-size="7.8" fill="#4A5768" font-family="Consolas">/tag/position</text>
+      <text x="496" y="100" text-anchor="middle" font-size="8" fill="#4A5768">x y z (cm)</text>
+      <!-- outputs -->
+      <line x1="602" y1="124" x2="602" y2="150" stroke="#8894A3" stroke-width="1.5" marker-end="url(#ag)"/>
+      <rect x="512" y="152" width="160" height="52" rx="6" fill="#F3F6F9" stroke="#D5DCE5"/>
+      <text x="592" y="172" text-anchor="middle" font-size="10" fill="#4A5768">점구름 화면 · 스피커 소리</text>
+      <text x="592" y="188" text-anchor="middle" font-size="10" fill="#4A5768">웹(릴레이 PTU1) · TD(OSC 7000)</text>
+      <!-- simulator -->
+      <rect x="10" y="170" width="460" height="112" rx="8" fill="#FBEFE4" stroke="#B4530B" stroke-dasharray="6 4"/>
+      <text x="22" y="192" font-size="12" font-weight="bold" fill="#B4530B">하드웨어 없이 시험할 때 (PC 한 대)</text>
+      <rect x="26" y="204" width="200" height="62" rx="6" fill="#fff" stroke="#B4530B"/>
+      <text x="126" y="226" text-anchor="middle" font-size="11" font-weight="bold" fill="#0F1A2B">가짜 태그 + 가짜 앵커 4</text>
+      <text x="126" y="243" text-anchor="middle" font-size="9.5" fill="#4A5768">같은 형식의 USB 줄을 만듦</text>
+      <text x="126" y="257" text-anchor="middle" font-size="9" fill="#4A5768" font-family="Consolas">apeficiation_sim.py</text>
+      <rect x="268" y="204" width="190" height="62" rx="6" fill="#E5F4EA" stroke="#1E7A45"/>
+      <text x="363" y="226" text-anchor="middle" font-size="11" font-weight="bold" fill="#0F1A2B">원본 pi_gateway.py</text>
+      <text x="363" y="243" text-anchor="middle" font-size="9.5" fill="#4A5768">GitHub에서 받아 그대로 실행</text>
+      <text x="363" y="257" text-anchor="middle" font-size="9.5" fill="#4A5768">(고친 곳 없음)</text>
+      <line x1="226" y1="235" x2="266" y2="235" stroke="#B4530B" stroke-width="2" marker-end="url(#ar)"/>
+      <path d="M458,235 C495,235 515,180 540,128" fill="none" stroke="#B4530B" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#ar)"/>
+      <text x="492" y="246" font-size="9.5" fill="#B4530B">같은 OSC</text>
+    </svg>
+    <figcaption>그림 1. 실제 장비 경로(위)와 하드웨어 없는 시험 경로(아래). 언리얼이 받는 데이터는 두 경우 모두 같습니다.</figcaption>
+  </figure>
+
+  <h3>이번에 한 일</h3>
+  <table>
+    <tr><th style="width:22%">구분</th><th>내용</th></tr>
+    <tr><td>분석</td><td>Apeficiation의 파일 3개(앵커 펌웨어, 태그+모터 펌웨어, 파이 게이트웨이)를 읽고, 측정 방식·데이터 형식·위치 계산·우리 시스템과 맞지 않는 점을 정리(2장).</td></tr>
+    <tr><td>언리얼 수신부</td><td>원본 게이트웨이가 보내는 좌표(방 모서리 기준)를 스캔 좌표로 바꾸는 <b>A·B 맞춤</b>(키 7·8·9, 파일 저장), 좌우 반전 옵션, 방향 정보가 없을 때 <b>걷는 방향</b>으로 바라보기, HUD 안내, 진단 로그 추가(5장).</td></tr>
+    <tr><td>시험 환경</td><td><code>tools/apeficiation_sim.py</code>: 원본 <code>pi_gateway.py</code>를 그대로 돌리고 앵커 출력만 가짜로 만들어, 6가지 상황을 재현하고 정확도를 숫자로 보여 줌(3장, 6장).</td></tr>
+    <tr><td>빌드·검증</td><td>언리얼 플러그인 빌드 성공, 자동화 테스트 8개 통과, 시뮬레이터 자체 시험 통과, 실제 언리얼 실행 + 시뮬레이터로 A·B 맞춤 확인(7장).</td></tr>
+  </table>
+
+  <div class="box warn">
+    <b class="t">미리 알아 둘 것</b>
+    <ul>
+      <li>원본 태그의 진동 모터는 <b>정해진 리듬</b>으로만 움직입니다. 사물에 가까워질수록 세지는 진동은 원본으로는 안 되고, PhoneTwin 버전(20바이트 펌웨어 + <code>phonetwin_gateway.py</code>)이 필요합니다.</li>
+      <li>실제 장비, 사용자 에디터에서 키 7·8을 직접 누르는 동작은 아직 확인하지 않았습니다(9장).</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ======================================================================= 2 -->
+<section>
+  <h2>2. Apeficiation 저장소 분석</h2>
+  <p>저장소는 2026-11-04에 올라온 커밋 5개(마지막 <code>5ef05a3</code> “firmware → arduino, gateway → pi 폴더 이름 변경”) 이후 바뀌지 않았습니다. 파일은 3개, 합계 857줄입니다.</p>
+
+  <div class="keep"><h3>2-1. 구성</h3>
+  <table>
+    <tr><th style="width:27%">파일</th><th style="width:9%" class="num">줄</th><th>역할</th></tr>
+    <tr><td><code>arduino/4uwb_anchor/<br>4uwb_anchor.ino</code></td><td class="num">238</td><td>앵커 4개에 같은 코드를 올리고 맨 위 <code>ANCHOR_ID</code>만 1~4로 바꿈. 태그의 질문에 답하고 거리를 계산해 태그에 돌려주며, USB로 <code>R,스윕,앵커,거리m,수신세기dBm</code>을 출력.</td></tr>
+    <tr><td><code>arduino/uwb_tag_motors/<br>uwb_tag_motors.ino</code></td><td class="num">451</td><td>태그(관객 착용). 앵커 1→2→3→4 순서로 거리를 묻고(앵커마다 50ms까지 기다림) 스스로도 위치를 계산해 USB로 출력(디버그용). PCA9685로 진동 모터 5개를 <b>위치와 무관한 고정 리듬</b>으로 돌림.</td></tr>
+    <tr><td><code>pi/pi_gateway.py</code></td><td class="num">168</td><td>파이에 꽂힌 앵커 USB(<code>/dev/ttyACM*</code>) 줄을 모아 같은 스윕 번호의 4개가 모이면 위치 계산 → OSC <code>/tag/position</code>(cm)를 <code>127.0.0.1:8000</code>으로 보냄.</td></tr>
+  </table></div>
+
+  <table>
+    <tr><th style="width:27%">하드웨어</th><th>배선 (XIAO nRF52840 기준)</th></tr>
+    <tr><td>DWM1000 (모든 보드)</td><td>D8 SCK · D9 MISO · D10 MOSI · D0 CSN · D1 RSTn · D2 IRQ · 전원은 별도 3.3V 레귤레이터 · GND 공통</td></tr>
+    <tr><td>모터 (태그만)</td><td>D4 SDA · D5 SCL → PCA9685(주소 0x40, 1kHz PWM) CH0~4 → AO3400A MOSFET → PN-VM102 진동 모터 5개</td></tr>
+    <tr><td>무선 설정</td><td>네트워크 ID 10, 모드 LONGDATA_RANGE_LOWPOWER, 안테나 지연 16384(보정 전 기본값), 주소: 앵커 1~4, 태그 5</td></tr>
+    <tr><td>LED</td><td>앵커: 파랑 = 켜지는 중, 초록 깜빡 = 거리 계산, 빨강 = 순서 오류 · 태그: 초록 = 위치 계산, 빨강 = 응답 없는 앵커 있음</td></tr>
+  </table>
+
+  <h3>2-2. 거리 측정 방식 (비대칭 양방향 거리 측정)</h3>
+  <figure>
+    <svg viewBox="0 0 680 190" width="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0B6E8C"/></marker></defs>
+      <text x="70" y="18" text-anchor="middle" font-size="12" font-weight="bold">태그</text>
+      <text x="430" y="18" text-anchor="middle" font-size="12" font-weight="bold">앵커 n</text>
+      <line x1="70" y1="26" x2="70" y2="182" stroke="#8894A3" stroke-width="2"/>
+      <line x1="430" y1="26" x2="430" y2="182" stroke="#8894A3" stroke-width="2"/>
+      <line x1="70" y1="40" x2="428" y2="58" stroke="#0B6E8C" stroke-width="1.8" marker-end="url(#a2)"/>
+      <text x="250" y="42" text-anchor="middle" font-size="10.5">① POLL (받을 앵커 번호, 스윕 번호)</text>
+      <line x1="430" y1="76" x2="72" y2="94" stroke="#0B6E8C" stroke-width="1.8" marker-end="url(#a2)"/>
+      <text x="250" y="78" text-anchor="middle" font-size="10.5">② POLL_ACK (3ms 뒤)</text>
+      <line x1="70" y1="112" x2="428" y2="130" stroke="#0B6E8C" stroke-width="1.8" marker-end="url(#a2)"/>
+      <text x="250" y="114" text-anchor="middle" font-size="10.5">③ RANGE (태그 시각 3개를 실어 보냄)</text>
+      <line x1="430" y1="150" x2="72" y2="168" stroke="#0B6E8C" stroke-width="1.8" marker-end="url(#a2)"/>
+      <text x="250" y="152" text-anchor="middle" font-size="10.5">④ RANGE_REPORT (거리 m, float)</text>
+      <rect x="450" y="118" width="222" height="44" rx="5" fill="#E3F2F6"/>
+      <text x="460" y="136" font-size="10">앵커가 비행시간 계산 →</text>
+      <text x="460" y="152" font-size="10" font-family="Consolas">USB: R,스윕,n,거리,세기</text>
+    </svg>
+    <figcaption>그림 2. 태그 한 번의 “스윕” = 앵커 1~4에 이 과정을 차례로 반복. 시뮬레이터 기준 앵커당 약 8ms, 위치 약 28번/초.</figcaption>
+  </figure>
+  <p>비행시간(ToF) = (round1 × round2 − reply1 × reply2) ÷ (round1 + round2 + reply1 + reply2). 두 기기의 시계가 서로 맞지 않아도 되는 방식입니다. 거리 = ToF × 빛의 속도.</p>
+  <table>
+    <tr><th style="width:27%">데이터 (18바이트)</th><th>내용</th></tr>
+    <tr><td><code>[0]</code></td><td>종류: 0 POLL · 1 POLL_ACK · 2 RANGE · 3 RANGE_REPORT · 255 RANGE_FAILED</td></tr>
+    <tr><td><code>[1..15]</code></td><td>RANGE: 태그 시각 3개(5바이트씩 [1] [6] [11]) · RANGE_REPORT: 거리 float [1..4]</td></tr>
+    <tr><td><code>[16]</code> / <code>[17]</code></td><td>받을 앵커 번호(다른 앵커는 무시) / 스윕 번호(0~255 반복)</td></tr>
+  </table>
+
+  <div class="keep"><h3>2-3. 위치 계산과 파이의 처리 순서</h3>
+  <table>
+    <tr><th style="width:5%">#</th><th style="width:28%">단계</th><th>원본 동작 (pi_gateway.py)</th></tr>
+    <tr><td>1</td><td>줄 읽기</td><td>모든 <code>/dev/ttyACM*</code>를 115200bps로 동시에 읽고, 정규식 <code>^R,(\d+),(\d+),(-?\d+\.\d+),(-?\d+\.\d+)$</code>에 맞는 줄만 사용</td></tr>
+    <tr><td>2</td><td>스윕 모으기</td><td>스윕 번호별로 모아 <b>앵커 4개가 모두 오면</b> 계산. 0.5초 안에 다 안 모이면 버림. 거리가 0~6m 밖이면 버림</td></tr>
+    <tr><td>3</td><td>튐 제거</td><td>앵커별 최근 거리 3개의 중앙값</td></tr>
+    <tr><td>4</td><td>위치 풀기</td><td>앵커 1을 기준으로 거리 제곱의 차이를 빼서 1차식 3개로 만들고 크라메르 공식으로 x, y, z. 행렬식이 0에 가까우면 실패</td></tr>
+    <tr><td>5</td><td>부드럽게</td><td>새 위치 × 0.4 + 예전 위치 × 0.6. 1초 넘게 끊겼으면 새로 시작</td></tr>
+    <tr><td>6</td><td>보내기</td><td>OSC <code>/tag/position</code> [x×100, y×100, z×100] (float 3개, cm) → 기본 <code>127.0.0.1:8000</code></td></tr>
+  </table></div>
+  <p class="small">앵커 좌표(<code>ANCHOR_POS</code>)는 태그 펌웨어와 파이 코드 <b>두 곳</b>에 같은 값으로 적혀 있습니다: 1 (0, 0, 0.5) · 2 (3, 0, 2.5) · 3 (0, 3, 2.5) · 4 (3, 3, 0.5) m — 원본 주석에 “임시 값”이라고 되어 있습니다.</p>
+</section>
+
+<section>
+  <h3 style="margin-top:0">2-4. 우리 시스템에 붙일 때 문제가 되는 점</h3>
+  <table>
+    <tr><th style="width:5%">#</th><th style="width:30%">문제</th><th>영향과 이번 대응</th></tr>
+    <tr><td>1</td><td>좌표 원점 = 앵커 1이 있는 방 모서리</td><td>스캔의 A·B와 무관해 그대로면 관객이 엉뚱한 곳에 나타남 → <b>언리얼 A·B 맞춤(키 7·8)</b> 추가</td></tr>
+    <tr><td>2</td><td>앵커 좌표가 코드에 고정(두 곳)</td><td>실제 방에 맞게 팀이 펌웨어와 파이 양쪽을 같은 값으로 고쳐야 함. 앵커 4개 높이가 같으면 위치가 <b>하나도</b> 안 나옴(시뮬레이터 <code>flat</code>으로 확인)</td></tr>
+    <tr><td>3</td><td>4개가 모두 와야 계산</td><td>사람이 앵커 하나를 가리면 그 스윕은 버려짐. 앵커당 10%만 실패해도 출력이 28 → 12번/초(시뮬레이터 <code>dropout</code>)</td></tr>
+    <tr><td>4</td><td>방향·품질 정보 없음</td><td>위치만 옴 → 언리얼이 <b>걷는 방향</b>으로 바라보게 함. HUD에 원 좌표 표시</td></tr>
+    <tr><td>5</td><td>진동이 언리얼과 무관</td><td>원본 태그는 정해진 리듬(모터마다 약 2.6초 동안 서서히 세졌다가 0.5초 최대, 다시 2.6초 동안 약해진 뒤 22.5초 쉼. 모터 5개가 5.6초씩 엇갈려 시작). 거리별 진동은 PhoneTwin 버전 필요</td></tr>
+    <tr><td>6</td><td>보낼 주소 기본값 127.0.0.1</td><td>파이 자기 자신 → 실행할 때 <code>--osc-host &lt;PC IP&gt;</code> 필수</td></tr>
+  </table>
+
+  <h3>2-5. 원본과 PhoneTwin 버전 비교</h3>
+  <p>11월 5일에 원본을 바탕으로 만든 PhoneTwin 버전(<code>PhoneTwin_v4/arduino</code>, <code>pi/phonetwin_gateway.py</code>)이 이미 있습니다. 언리얼은 <b>두 가지를 모두</b> 받습니다.</p>
+  <table>
+    <tr><th style="width:22%">항목</th><th style="width:39%">Apeficiation 원본</th><th>PhoneTwin 버전</th></tr>
+    <tr><td>무선 데이터</td><td>18바이트</td><td>20바이트 (+[18] 진동 세기, [19] 닿음) — 섞어 쓰면 동작 안 함</td></tr>
+    <tr><td>앵커 좌표</td><td>펌웨어·파이 두 곳에 고정</td><td>파이 <code>anchors.json</code> 한 곳, 줄자로 잰 거리 6개로도 가능</td></tr>
+    <tr><td>최소 앵커 수</td><td>4개 모두</td><td>3개 (최소제곱)</td></tr>
+    <tr><td>평평한 배치</td><td>계산 불가</td><td>높이 고정하고 x·y만 계산</td></tr>
+    <tr><td>스캔과 맞추기</td><td>없음 → <b>언리얼 키 7·8</b>(이번 추가)</td><td>파이에서 <code>--mark A</code>, <code>--mark B</code></td></tr>
+    <tr><td>OSC</td><td><code>/tag/position</code></td><td><code>/tag/position</code> + <code>/tag/heading</code> + <code>/tag/quality</code></td></tr>
+    <tr><td>진동</td><td>고정 리듬</td><td>언리얼 PTH1 → 파이 → 앵커 USB → 무선으로 태그</td></tr>
+  </table>
+  <div class="box info">
+    <b class="t">어느 쪽을 쓸까</b>
+    <p>팀 코드를 그대로 두고 먼저 연결해 보려면 <b>원본 + 언리얼 7·8</b>(이 문서). 사물 거리에 따라 진동이 달라져야 하는 단계가 되면 PhoneTwin 버전으로 옮기면 됩니다. 언리얼 쪽은 둘 다 바꿀 것이 없습니다.</p>
+  </div>
+</section>
+
+<!-- ======================================================================= 3 -->
+<section>
+  <h2>3. 사용법 A — 하드웨어 없이 시험</h2>
+  <p>PC 한 대로 “앵커 4개 → 파이 → 언리얼” 전체를 재현합니다. 앵커가 USB로 내보내는 줄만 가짜이고, 위치 계산과 OSC 전송은 <b>원본 <code>pi_gateway.py</code>가 그대로</b> 합니다. 실행할 때마다 GitHub에서 최신 원본을 받아 오므로 팀이 코드를 고치면 그 버전으로 시험됩니다.</p>
+
+  <h3>준비 (처음 한 번)</h3>
+  <ul>
+    <li>파이썬(<code>py</code>)과 git이 있으면 됩니다. <code>pyserial</code>·<code>python-osc</code>는 없어도 됩니다(시뮬레이터가 같은 바이트의 OSC를 직접 만듦).</li>
+    <li>원본은 <code>PhoneTwin_v4/tools/.apeficiation/</code>에 자동으로 받아지며 git에는 올라가지 않습니다(팀 코드라 다시 배포하지 않음).</li>
+  </ul>
+
+  <h3>언리얼과 함께 확인하기</h3>
+  <ol class="steps">
+    <li>언리얼 에디터를 켜고 <b>Play</b>. 키 <span class="key">2</span>를 눌러 입력을 “UWB 태그”로 바꿉니다.</li>
+    <li>PowerShell에서 <code>PhoneTwin_v4</code> 폴더로 가서 실행합니다.
+<pre>py tools\apeficiation_sim.py --walk ab</pre></li>
+    <li><b>0~6초</b>: 가짜 태그가 A 위에 서 있습니다 → 언리얼에서 <span class="key">7</span>.<br><b>6~12초</b>: B 위 → <span class="key">8</span>. HUD에 “UWB A·B 맞춤 완료 · A→B 실측 1.00 m” 정도가 뜹니다.</li>
+    <li>그 뒤로 가짜 관객이 8자로 걷습니다. 점구름 위에서 관객이 움직이고, 사물에 다가가면 소리·물결이 나는지 봅니다.</li>
+    <li>끝내려면 PowerShell에서 <span class="key">Ctrl</span>+<span class="key">C</span>. 맞춘 A·B는 저장되므로 다음부터는 7·8 없이 <code>py tools\apeficiation_sim.py</code>만 실행해도 됩니다.</li>
+  </ol>
+
+  <h3>자주 쓰는 명령</h3>
+  <table>
+    <tr><th style="width:47%">명령</th><th>하는 일</th></tr>
+    <tr><td><code>py tools\apeficiation_sim.py</code></td><td>잡음 5cm 상황, 8자 걷기, OSC → 127.0.0.1:8000. 2초마다 실제 위치·출력 횟수·오차 표시</td></tr>
+    <tr><td><code>… --walk ab</code></td><td>A 위 6초 → B 위 6초 → 8자 걷기 (A·B 맞춤 연습)</td></tr>
+    <tr><td><code>… --walk line</code> / <code>still</code></td><td>A–B 선을 따라 왕복 / 방 가운데에 가만히</td></tr>
+    <tr><td><code>… --scenario dropout</code></td><td>상황 바꾸기: <code>ideal noisy uncal dropout spikes flat</code></td></tr>
+    <tr><td><code>… --dry-run --show-lines</code></td><td>OSC 없이, 앵커가 내보내는 줄을 그대로 화면에</td></tr>
+    <tr><td><code>… --selftest</code></td><td>6가지 상황을 4초씩 돌리고, 보낸 OSC를 다시 받아 풀어서 값까지 검사 → “결과: 통과”</td></tr>
+    <tr><td><code>… --osc-host 192.168.x.x</code></td><td>다른 PC의 언리얼로 보내기 (기본 8000번)</td></tr>
+    <tr><td><code>… --mark-a 1.0,1.5 --mark-b 2.0,1.5</code></td><td>가짜 방에서 A·B 자리 (원본 방 좌표, m)</td></tr>
+    <tr><td><code>… --anchors "0,0,0.5;3,0,2.5;0,3,2.5;3,3,0.5"</code></td><td>앵커 좌표 바꾸기 (팀이 원본 <code>ANCHOR_POS</code>를 고친 것과 같음)</td></tr>
+  </table>
+
+  <div class="keep"><h3>6가지 상황</h3>
+  <table>
+    <tr><th style="width:14%">이름</th><th style="width:38%">재현하는 것</th><th>보이는 결과 (자체 시험 기준)</th></tr>
+    <tr><td><code>ideal</code></td><td>오차 없는 거리</td><td>오차 평균 3cm — 원본의 부드럽게 처리(0.4)로 생기는 지연뿐</td></tr>
+    <tr><td><code>noisy</code></td><td>거리 잡음 5cm (기본값)</td><td>오차 평균 5cm, 95% 8cm</td></tr>
+    <tr><td><code>uncal</code></td><td>안테나 지연 미보정 → 모든 거리 +25cm</td><td>오차 평균 10cm, <b>잔차 23cm</b> ← 실제 장비에서 잔차가 크면 보정이 필요하다는 신호</td></tr>
+    <tr><td><code>dropout</code></td><td>앵커 응답이 10%씩 실패(몸이 가림)</td><td>스윕의 35%가 버려지고 출력 28 → 12번/초</td></tr>
+    <tr><td><code>spikes</code></td><td>5% 확률로 반사파 +1.5m</td><td>중앙값 필터가 대부분 막지만 최대 70cm 튐</td></tr>
+    <tr><td><code>flat</code></td><td>앵커 4개 높이가 모두 1.5m</td><td>위치 0개 — 원본 계산식의 한계(높이를 다르게 둬야 함)</td></tr>
+  </table></div>
+</section>
+
+<!-- ======================================================================= 4 -->
+<section>
+  <h2>4. 사용법 B — 실제 장비 연결</h2>
+
+  <h3>팀(하드웨어)이 할 일</h3>
+  <ol class="steps">
+    <li><b>앵커 위치 정하기</b>: 방 안 아무 곳이나 가능하지만 <b>높이를 서로 다르게</b>(예: 두 개는 0.5m, 두 개는 2.5m). 앵커 1의 바닥 위치가 원점, 1→2가 +x, 1→3 쪽이 +y가 되도록 실제 좌표를 m로 잽니다.</li>
+    <li>그 좌표를 <code>uwb_tag_motors.ino</code>와 <code>pi_gateway.py</code>의 <code>ANCHOR_POS</code> <b>두 곳 모두</b>에 같은 값으로 적고, 태그·앵커 1~4에 업로드(<code>ANCHOR_ID</code> 1~4).</li>
+    <li>앵커 4개를 USB로 파이에 연결. 태그를 켜고 LED가 초록으로 깜빡이는지 확인.</li>
+    <li>파이에서 먼저 출력만 확인한 뒤 PC로 보냅니다.
+<pre>python3 pi_gateway.py --dry-run                    <span class="c"># x,y,z (m) 와 residual 이 계속 나오면 정상</span>
+python3 pi_gateway.py --osc-host 192.168.0.12      <span class="c"># 언리얼 PC의 IP (PowerShell: ipconfig)</span></pre></li>
+  </ol>
+
+  <h3>언리얼에서 할 일</h3>
+  <ol class="steps">
+    <li><b>처음 한 번</b>: Windows 방화벽이 UnrealEditor의 UDP 수신을 묻으면 “허용”. 이미 막았다면 방화벽 설정에서 UnrealEditor를 허용 목록에 추가(포트 8000).</li>
+    <li>Play → <span class="key">2</span>. HUD 두 번째 줄이 “UWB 태그 (Pi OSC): 파이 IP · 추적 중”, 그 아래 “UWB 원 좌표 (…) m · Apeficiation 게이트웨이 형식”이면 수신 중.</li>
+    <li>태그를 스캔 바닥 <b>A</b>(휴대폰 앱 3D 화면의 초록 표시, 바닥 정중앙) 위에 1초 이상 가만히 두고 <span class="key">7</span>.</li>
+    <li>태그를 <b>B</b>(파랑, A에서 1m) 위에 두고 <span class="key">8</span> → “UWB A·B 맞춤 완료 · A→B 실측 x m”. 실측이 1m에서 많이 벗어나면 앵커 좌표나 보정을 다시 봅니다.</li>
+    <li>태그를 들고 걸어 봅니다. 좌우가 반대로 움직이면 Details(액터 <code>PhoneTwinScan_Auto</code>) &gt; Phone Twin|Input &gt; <code>bUwbMirror</code>를 켭니다(앵커 번호를 시계 방향으로 매긴 경우).</li>
+  </ol>
+
+  <h3>키와 HUD</h3>
+  <table>
+    <tr><th style="width:18%">키 / 명령</th><th>동작</th></tr>
+    <tr><td><span class="key">2</span></td><td>입력을 UWB 태그로 (<span class="key">1</span>은 휴대폰)</td></tr>
+    <tr><td><span class="key">7</span></td><td>지금 태그가 A 위에 있음 — 최근 1초 위치의 평균을 A로 기록</td></tr>
+    <tr><td><span class="key">8</span></td><td>지금 태그가 B 위에 있음 — 맞춤 완료, <code>uwb_frame.json</code>에 저장</td></tr>
+    <tr><td><span class="key">9</span></td><td>맞춤 지우기 (원본 좌표 그대로 사용)</td></tr>
+    <tr><td><code>PhoneTwin.UwbMark A|B|clear</code></td><td>같은 일을 콘솔(<span class="key">`</span>)에서</td></tr>
+  </table>
+  <table>
+    <tr><th style="width:42%">HUD 문구</th><th>뜻</th></tr>
+    <tr><td>OSC 8000 /tag/position 대기</td><td>아직 아무것도 안 옴 → 파이 실행, <code>--osc-host</code>, 방화벽 확인</td></tr>
+    <tr><td>Apeficiation 게이트웨이 형식</td><td>위치만 오고 품질 정보가 없음 = 원본 게이트웨이</td></tr>
+    <tr><td>⚠ 스캔과 좌표 맞추기: … 7, … 8</td><td>A·B 맞춤이 아직 없음</td></tr>
+    <tr><td>UWB 표시 실패: 최근 1초 안에 OSC 위치가 없습니다</td><td>7·8을 누른 순간 신호가 끊겨 있었음</td></tr>
+    <tr><td>UWB 표시 실패: A와 B가 30cm보다 가깝습니다</td><td>B를 A에서 더 떨어진 곳에서 다시</td></tr>
+    <tr><td>⚠ 신호는 UWB 태그에서 오고 있습니다 — [2]</td><td>입력이 휴대폰으로 되어 있음 → 2</td></tr>
+    <tr><td>대기 중 — 휴대폰에서 ‘걷기 테스트 시작’…</td><td>휴대폰이 연결돼 있고 걷기 테스트를 안 누름. 휴대폰이 연결돼 있으면 UWB 반응도 이 버튼을 기다림(휴대폰이 없으면 바로 시작)</td></tr>
+  </table>
+</section>
+
+<!-- ======================================================================= 5 -->
+<section class="p">
+  <h2>5. 기술 — 언리얼이 OSC를 받는 방식</h2>
+
+  <h3>5-1. 처리 흐름 (PhoneTwinLink 플러그인)</h3>
+  <table>
+    <tr><th style="width:5%">#</th><th style="width:33%">코드</th><th>하는 일</th></tr>
+    <tr><td>1</td><td><code>OpenSocket()</code></td><td>Play 시 UDP 7777(휴대폰)과 별도로 <b>UDP 8000</b> 소켓(<code>UwbSocket</code>)을 엶. 포트를 이미 다른 프로그램이 쓰면 로그에 오류</td></tr>
+    <tr><td>2</td><td><code>ReceiveUwbOsc()</code></td><td>매 프레임 쌓인 패킷을 모두 읽음</td></tr>
+    <tr><td>3</td><td><code>PhoneTwin::ParseOscPacket()</code></td><td>OSC 1.0 메시지·번들(중첩 포함) 해석. float/int/double/문자열 인자. 잘린 패킷은 버림</td></tr>
+    <tr><td>4</td><td><code>HandleUwbOsc()</code></td><td><code>/tag/position</code>: × <code>UwbOscMetresPerUnit</code>(0.01) → 원 좌표 m(<code>UwbRaw</code>), 최근 2초 기록 → <code>FUwbMarks::ToRoom()</code> → 방 좌표 R(<code>EspPose</code>). 방향이 1초 넘게 안 오면 걷는 방향으로 yaw. 보낸 쪽 IP를 진동 응답 주소로 기억</td></tr>
+    <tr><td>5</td><td><code>UpdateTracker()</code></td><td>R(m) → 언리얼(cm): <code>TrackerPos = EspOrigin + Yaw(EspYawOffset) · (x, −y, z) × 100 × EspScale</code>. 스캔은 meta의 A=원점, A→B=+X로 놓여 있어 그대로 겹침</td></tr>
+    <tr><td>6</td><td><code>Measure()</code>, <code>UpdateSounds()</code></td><td>사물·표면까지 거리, 소리, 닿을 때 물결, 진동 세기(PTH1 → 보낸 IP:4210, 원본 파이는 무시)</td></tr>
+  </table>
+  <p class="small">0.5초(<code>SignalTimeout</code>) 동안 위치가 안 오면 “끊김”으로 보고 추적을 멈춥니다. 원본은 스윕이 불완전하면 아무것도 안 보내므로 이 시간으로 끊김을 판단합니다.</p>
+
+  <h3>5-2. A·B 맞춤 식 (<code>PhoneTwin::FUwbMarks</code>, PhoneTwinCore.h)</h3>
+  <figure>
+    <svg viewBox="0 0 680 170" width="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0F1A2B"/></marker></defs>
+      <rect x="20" y="20" width="170" height="130" fill="#F3F6F9" stroke="#D5DCE5"/>
+      <text x="105" y="14" text-anchor="middle" font-size="10.5" font-weight="bold">원본 좌표 (방 모서리 원점)</text>
+      <circle cx="24" cy="146" r="5" fill="#0B6E8C"/><text x="32" y="142" font-size="9">앵커1 (0,0)</text>
+      <line x1="24" y1="146" x2="80" y2="146" stroke="#0F1A2B" marker-end="url(#a3)"/><text x="82" y="140" font-size="9">+x</text>
+      <line x1="24" y1="146" x2="24" y2="100" stroke="#0F1A2B" marker-end="url(#a3)"/><text x="28" y="100" font-size="9">+y</text>
+      <circle cx="95" cy="85" r="6" fill="#1E7A45"/><text x="95" y="72" text-anchor="middle" font-size="10" fill="#1E7A45">A</text>
+      <circle cx="150" cy="55" r="6" fill="#2563EB"/><text x="160" y="50" font-size="10" fill="#2563EB">B</text>
+      <line x1="95" y1="85" x2="144" y2="58" stroke="#8894A3" stroke-dasharray="4 3"/>
+      <text x="260" y="78" font-size="11">7 · 8로 A, B 기록</text>
+      <line x1="230" y1="88" x2="400" y2="88" stroke="#0B6E8C" stroke-width="2" marker-end="url(#a3)"/>
+      <text x="260" y="106" font-size="10" fill="#4A5768">빼고(A를 원점으로) 돌림(A→B를 +X로)</text>
+      <rect x="440" y="20" width="220" height="130" fill="#E3F2F6" stroke="#9FCFDC"/>
+      <text x="550" y="14" text-anchor="middle" font-size="10.5" font-weight="bold">방 좌표 R = 스캔 좌표</text>
+      <circle cx="500" cy="100" r="6" fill="#1E7A45"/><text x="500" y="122" text-anchor="middle" font-size="10" fill="#1E7A45">A (0,0)</text>
+      <circle cx="600" cy="100" r="6" fill="#2563EB"/><text x="600" y="122" text-anchor="middle" font-size="10" fill="#2563EB">B (1,0)</text>
+      <line x1="500" y1="100" x2="592" y2="100" stroke="#0F1A2B" marker-end="url(#a3)"/><text x="545" y="94" text-anchor="middle" font-size="9">+X 앞</text>
+      <line x1="500" y1="100" x2="500" y2="45" stroke="#0F1A2B" marker-end="url(#a3)"/><text x="506" y="48" font-size="9">+Y 왼쪽</text>
+    </svg>
+    <figcaption>그림 3. 높이(z)는 바꾸지 않습니다. 원본의 z도 바닥에서의 높이이기 때문입니다.</figcaption>
+  </figure>
+<pre>θ = atan2(B.y − A.y, B.x − A.x)      <span class="c">← 원본 좌표에서 A→B 방향</span>
+dx = x − A.x,   dy = y − A.y
+X =  cosθ·dx + sinθ·dy               <span class="c">← 앞 (A→B 방향 성분)</span>
+Y = −sinθ·dx + cosθ·dy               <span class="c">← 왼쪽</span>
+Z =  z
+bUwbMirror 켜짐: 계산 전에 원본 y, A.y, B.y의 부호를 바꿈 (좌우 반전)
+방향: yaw_R = yaw_원본 − θ  (반전이면 −yaw_원본 − θ)</pre>
+  <p>A는 <span class="key">7</span>을 누른 순간부터 거슬러 <b>1초 동안 받은 위치의 평균</b>(3개 이상 필요), B도 같습니다. A–B가 30cm보다 가까우면 거부합니다. 결과는 <code>ARKO_PROJECT/PhoneTwinScans/uwb_frame.json</code>에 저장되고 Play할 때마다 읽습니다.</p>
+<pre>{
+  "note": "UWB OSC gateway frame (m) at the scan floor marks A and B, written by Unreal keys 7/8",
+  "a": [1.0000, 1.5000, 1.0000],
+  "b": [2.0000, 1.5000, 1.0000]
+}</pre>
+  <p class="small">PhoneTwin 게이트웨이(<code>--mark A/B</code>로 이미 R 좌표를 보냄)를 쓸 때는 언리얼 맞춤을 안 해도 되고, 해도 A≈(0,0), A→B≈+X가 기록되어 결과가 거의 같습니다.</p>
+</section>
+
+<section>
+  <h3 style="margin-top:0">5-3. 방향 추정</h3>
+  <p>원본은 <code>/tag/heading</code>을 보내지 않으므로, 방향 메시지가 1초 넘게 없으면 언리얼이 직접 정합니다. 마지막 기준점에서 바닥 평면으로 <code>UwbHeadingStepCm</code>(15cm) 이상 움직이면 그 이동 방향을 yaw로 삼고 기준점을 옮깁니다. 제자리에 서 있으면 마지막 방향을 유지합니다. 소리의 “뒤돌아섬” 감쇠, 1인칭 시점이 이 방향을 씁니다.</p>
+
+  <h3>5-4. 설정 (Details &gt; Phone Twin|Input)</h3>
+  <table>
+    <tr><th style="width:27%">속성</th><th style="width:15%">기본값</th><th>설명</th></tr>
+    <tr><td><code>bUwbOscInput</code></td><td>켜짐</td><td>OSC 수신 사용</td></tr>
+    <tr><td><code>UwbOscPort</code></td><td>8000</td><td>원본 <code>OSC_PORT</code>와 같음</td></tr>
+    <tr><td><code>UwbOscAddress</code></td><td><code>/tag/position</code></td><td>원본 <code>OSC_ADDRESS</code>와 같음</td></tr>
+    <tr><td><code>UwbOscMetresPerUnit</code></td><td>0.01</td><td>cm로 옴(원본 <code>UNREAL_SCALE</code> 100). m로 보내면 1</td></tr>
+    <tr><td><code>bUwbMirror</code> <span class="tag">새로</span></td><td>꺼짐</td><td>좌우 반전</td></tr>
+    <tr><td><code>UwbHeadingStepCm</code> <span class="tag">새로</span></td><td>15</td><td>걷는 방향을 새로 정하는 이동 거리</td></tr>
+    <tr><td><code>EspOrigin / EspYawOffset / EspScale</code></td><td>0 / 0 / 1</td><td>추가 미세 조정(보통 그대로)</td></tr>
+    <tr><td><code>SignalTimeout</code></td><td>0.5초</td><td>이보다 오래 안 오면 끊김</td></tr>
+    <tr><td><code>bRequirePhoneWalkStart</code></td><td>켜짐</td><td>휴대폰이 연결돼 있으면 걷기 테스트 시작 전에는 UWB도 반응 안 함</td></tr>
+    <tr><td><code>EspAddress</code> / <code>EspHapticPort</code></td><td>(비움) / 4210</td><td>진동(PTH1)을 보낼 곳. 비우면 OSC를 보낸 파이 IP</td></tr>
+  </table>
+
+  <h3>5-5. 진단 로그</h3>
+  <p>언리얼을 <code>-PhoneTwinTrace</code>로 실행하면 1초마다 원 좌표와 바뀐 좌표가 로그에 남습니다(실제 시험 기록).</p>
+<pre>trace uwb raw (0.999, 1.535, 1.037) m -> room (-0.001, 0.035, 1.037) m yaw 0 (A·B marks), tracking 1   <span class="c">← A 위</span>
+trace uwb raw (2.003, 1.496, 1.033) m -> room (1.003, -0.004, 1.033) m yaw -5 (A·B marks), tracking 1  <span class="c">← B 위</span>
+trace uwb raw (2.289, 1.884, 0.895) m -> room (1.289, 0.384, 0.895) m yaw -31 (A·B marks), tracking 1  <span class="c">← 걷는 중</span></pre>
+</section>
+
+<!-- ======================================================================= 6 -->
+<section>
+  <div class="keep"><h2>6. 기술 — 시뮬레이터 구조 (<code>tools/apeficiation_sim.py</code>)</h2>
+  <table>
+    <tr><th style="width:24%">부분</th><th style="width:12%">구분</th><th>내용</th></tr>
+    <tr><td>위치 계산·필터·OSC</td><td><span class="tag real">원본</span></td><td>GitHub에서 받은 <code>pi/pi_gateway.py</code>를 모듈로 불러 <code>main()</code>을 그대로 실행. 정규식, 스윕 묶기, 중앙값, 크라메르 풀이, 0.4 평활, OSC 전송 모두 원본 코드</td></tr>
+    <tr><td>USB 읽기</td><td><span class="tag fake">대체</span></td><td>원본 <code>read_port()</code>만 바꿔 끼움. 포트 이름 <code>sim:1</code>~<code>sim:4</code>가 각각 앵커 하나. 가짜 줄도 <b>원본 정규식</b>을 통과해야 쓰임</td></tr>
+    <tr><td>앵커·태그</td><td><span class="tag fake">가짜</span></td><td>원본 펌웨어처럼 앵커 1→4 차례로 줄 생성: 앵커당 약 8ms(POLL → 3ms → RANGE → 보고), 실패하면 50ms 기다림(<code>TAG_TIMEOUT_MS</code>), 스윕 번호 0~255 반복. 줄 형식 <code>R,%d,%d,%.3f,%.1f</code></td></tr>
+    <tr><td>정확도 측정</td><td>추가</td><td>원본 <code>Tracker</code>를 상속해 결과가 나올 때마다 그 스윕의 실제 위치와 비교(평균·95%·최대 오차, 잔차, 출력 횟수)</td></tr>
+    <tr><td>OSC</td><td>-</td><td><code>python-osc</code>가 있으면 그것, 없으면 같은 바이트(<code>,fff</code> big-endian float)를 만드는 내장 대체</td></tr>
+    <tr><td>자체 시험</td><td>추가</td><td>임시 포트로 OSC를 다시 받아 풀어서 주소·형식·값(게이트웨이 m × 100 = cm)을 검사, 상황별 기대치와 비교</td></tr>
+  </table></div>
+  <table>
+    <tr><th style="width:14%">상황</th><th class="num">잡음</th><th class="num">고정 오차</th><th class="num">응답 실패</th><th class="num">튐</th><th>앵커 높이</th></tr>
+    <tr><td>ideal</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td>원본</td></tr>
+    <tr><td>noisy</td><td class="num">σ 5cm</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td>원본</td></tr>
+    <tr><td>uncal</td><td class="num">σ 5cm</td><td class="num">+25cm</td><td class="num">0</td><td class="num">0</td><td>원본</td></tr>
+    <tr><td>dropout</td><td class="num">σ 5cm</td><td class="num">0</td><td class="num">앵커당 10%</td><td class="num">0</td><td>원본</td></tr>
+    <tr><td>spikes</td><td class="num">σ 5cm</td><td class="num">0</td><td class="num">0</td><td class="num">5% · +1.5m</td><td>원본</td></tr>
+    <tr><td>flat</td><td class="num">σ 5cm</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td>모두 1.5m</td></tr>
+  </table>
+  <p class="small">가짜 관객 경로: 앵커들로 둘러싼 범위의 가운데를 중심으로 8자(16초 한 바퀴, 높이 1.0m ± 5cm). 수신 세기는 거리로 대략 만든 값이고 원본 게이트웨이는 쓰지 않습니다. 실제 장비의 갱신 속도(초당 횟수)는 하드웨어에서 다시 재야 합니다.</p>
+</section>
+
+<!-- ======================================================================= 7 -->
+<section>
+  <h2>7. 빌드와 검증 결과</h2>
+
+  <h3>7-1. 빌드 방법</h3>
+  <div class="box warn"><p><b>언리얼 에디터를 끈 상태</b>에서 빌드해야 합니다. 켜져 있으면 플러그인 DLL이 잠겨 덮어쓸 수 없습니다. 이번에는 에디터가 꺼져 있어 원래 프로젝트에 바로 빌드했고, 다음에 에디터를 켜면 새 기능이 들어옵니다.</p></div>
+<pre><span class="c"># PowerShell — 빌드 (약 30초)</span>
+&amp; "D:\Unreal Projects\UE_5.5\Engine\Build\BatchFiles\Build.bat" ARKO_PROJECTEditor Win64 Development `
+  "-Project=C:\Users\ujo21\OneDrive\Desktop\PhoneTwin\ARKO_PROJECT\ARKO_PROJECT.uproject" -WaitMutex -NoUBA -MaxParallelActions=4
+
+<span class="c"># 자동화 테스트 (화면 없이)</span>
+UnrealEditor-Cmd.exe ARKO_PROJECT.uproject -ExecCmds="Automation RunTests PhoneTwin;Quit" -unattended -nullrhi -nosplash -nosound
+
+<span class="c"># 실제 실행 + 시뮬레이터 (화면 없이, 1초마다 trace)</span>
+UnrealEditor.exe ARKO_PROJECT.uproject /Engine/Maps/Entry -game -nullrhi -nosound -PhoneTwinTrace "-ExecCmds=PhoneTwin.Source esp32"
+py tools\apeficiation_sim.py --walk ab --duration 22</pre>
+  <p class="small"><code>-NoUBA</code>: 예전에 빌드 가속기가 메모리 부족 오류(1450)를 낸 적이 있어 끕니다. 플러그인을 고친 뒤에는 <code>PhoneTwin_v4/unreal/ARKO_PROJECT/Plugins/PhoneTwinLink/Source</code>로 복사해 GitHub에 올립니다(이번 커밋 6139040에 포함).</p>
+
+  <h3>7-2. 검증 결과</h3>
+  <table>
+    <tr><th style="width:25%">시험</th><th style="width:12%">결과</th><th>내용</th></tr>
+    <tr><td>플러그인 빌드</td><td>성공</td><td>경고·오류 없음 (2회: 기능 추가, 진단 로그 추가)</td></tr>
+    <tr><td>자동화 테스트 8개</td><td>모두 통과</td><td>CalmSound, Collisions, Frames, Glow, Grid, Material, Packets, Ply. Packets에 A·B 변환 7가지 추가: A→원점, B→(1,0), A→B 왼쪽→+Y, 방향 90°→0°, 반전해도 A·B 유지, 반전 시 좌우 바뀜, 맞춤 없으면 그대로</td></tr>
+    <tr><td>시뮬레이터 <code>--selftest</code></td><td>통과</td><td>아래 표. 상황마다 4초, 보낸 OSC를 모두 다시 풀어 값 일치 확인</td></tr>
+    <tr><td>언리얼 실제 실행 + 시뮬레이터</td><td>확인</td><td>A·B를 파일로 넣고 <code>--walk ab</code>: A 위 → 방 좌표 (0, 0) ±3cm, B 위 → (1.00, 0.00), 걷기 시작하면 yaw가 이동 방향으로 바뀜, 시뮬레이터를 끄면 <code>tracking 0</code>. 출력 28번/초, 오차 평균 4.6cm</td></tr>
+  </table>
+  <table>
+    <tr><th>상황</th><th class="num">스윕</th><th class="num">버려진 스윕</th><th class="num">출력 (/초)</th><th class="num">오차 평균</th><th class="num">95%</th><th class="num">최대</th><th class="num">잔차</th><th class="num">OSC</th></tr>
+    <tr><td>ideal</td><td class="num">113</td><td class="num">0</td><td class="num">113 (28.1)</td><td class="num">3.3cm</td><td class="num">4.9</td><td class="num">5.2</td><td class="num">0.0</td><td class="num">OK</td></tr>
+    <tr><td>noisy</td><td class="num">112</td><td class="num">0</td><td class="num">113 (28.1)</td><td class="num">5.0cm</td><td class="num">7.9</td><td class="num">9.1</td><td class="num">1.6</td><td class="num">OK</td></tr>
+    <tr><td>uncal</td><td class="num">113</td><td class="num">0</td><td class="num">114 (28.4)</td><td class="num">9.7cm</td><td class="num">15.5</td><td class="num">17.6</td><td class="num">23.2</td><td class="num">OK</td></tr>
+    <tr><td>dropout</td><td class="num">76</td><td class="num">27</td><td class="num">49 (12.2)</td><td class="num">8.5cm</td><td class="num">11.6</td><td class="num">16.4</td><td class="num">1.7</td><td class="num">OK</td></tr>
+    <tr><td>spikes</td><td class="num">112</td><td class="num">0</td><td class="num">113 (28.1)</td><td class="num">5.9cm</td><td class="num">10.9</td><td class="num">69.6</td><td class="num">1.7</td><td class="num">OK</td></tr>
+    <tr><td>flat</td><td class="num">112</td><td class="num">0</td><td class="num">0 (0.0)</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td><td class="num">OK(0개)</td></tr>
+  </table>
+  <p class="small">언리얼 실행 시험의 최대 오차 97.6cm는 가짜 태그가 A → B로 순간 이동한 순간, 원본의 평활(0.4)이 따라가는 동안 생긴 값입니다. 실제 사람은 순간 이동하지 않습니다.</p>
+
+  <h3>7-3. 바뀐 파일</h3>
+  <table>
+    <tr><th style="width:44%">파일</th><th>변경</th></tr>
+    <tr><td><code>Public/PhoneTwinCore.h</code></td><td><code>FUwbMarks</code>(ToRoom, YawToRoom, Spacing, 반전)</td></tr>
+    <tr><td><code>Public/PhoneTwinScanActor.h</code></td><td><code>bUwbMirror</code>, <code>UwbHeadingStepCm</code>, <code>MarkUwb()</code>, 원 좌표 기록·맞춤 상태</td></tr>
+    <tr><td><code>Private/PhoneTwinScanActor.cpp</code></td><td>OSC 처리에 맞춤·방향 추정, 키 7·8·9, 콘솔 <code>PhoneTwin.UwbMark</code>, <code>uwb_frame.json</code> 읽기·쓰기, HUD 문구, trace 로그</td></tr>
+    <tr><td><code>Private/Tests/PhoneTwinTests.cpp</code></td><td>A·B 변환 시험 7개</td></tr>
+    <tr><td><code>PhoneTwin_v4/tools/apeficiation_sim.py</code></td><td>새 파일 (시뮬레이터)</td></tr>
+    <tr><td><code>PhoneTwin_v4/arduino/README.md</code></td><td>4장 “Apeficiation 원본을 그대로 쓸 때” + 시뮬레이터 사용법</td></tr>
+    <tr><td><code>PhoneTwin_v4/.gitignore</code></td><td><code>tools/.apeficiation/</code>(원본 사본) 제외</td></tr>
+  </table>
+  <p class="small">플러그인 경로의 앞부분: <code>ARKO_PROJECT/Plugins/PhoneTwinLink/Source/PhoneTwinLink/</code>. 원본 Apeficiation 저장소와 v3 폴더는 건드리지 않았습니다.</p>
+</section>
+
+<!-- ======================================================================= 8 -->
+<section>
+  <h2>8. 문제 해결</h2>
+  <table>
+    <tr><th style="width:28%">증상</th><th style="width:32%">가능한 원인</th><th>해결</th></tr>
+    <tr><td>HUD “OSC 8000 … 대기”가 계속</td><td>파이가 자기 자신(127.0.0.1)에 보냄 / 방화벽 / 다른 네트워크</td><td><code>--osc-host &lt;PC IP&gt;</code>, 방화벽에서 UnrealEditor 허용, PC와 파이가 같은 Wi-Fi인지</td></tr>
+    <tr><td>로그 “OSC 8000 (UWB 태그)를 열 수 없습니다”</td><td>다른 프로그램(TouchDesigner 등)이 8000번 사용</td><td>그 프로그램 끄기, 또는 <code>UwbOscPort</code>와 파이 <code>--osc-port</code>를 같은 다른 번호로</td></tr>
+    <tr><td>파이에서 위치가 하나도 안 나옴</td><td>앵커 높이가 모두 같음 / 앵커 하나가 계속 응답 안 함</td><td>높이를 다르게, 각 앵커 LED와 <code>--dry-run</code> 확인. 태그 USB 로그 “Sweep incomplete, anchors answered: …”로 빠진 앵커 확인</td></tr>
+    <tr><td>위치가 자주 끊김</td><td>몸·가구가 앵커를 가림(4개 모두 필요)</td><td>앵커를 높이 달기, 시야 확보. 근본 해결은 3개로도 계산하는 PhoneTwin 게이트웨이</td></tr>
+    <tr><td>위치가 일정하게 어긋남, 잔차(residual)가 큼</td><td>안테나 지연 미보정 / 앵커 좌표를 잘못 잼</td><td>앵커 좌표 다시 재기, <code>ANTENNA_DELAY</code> 보정(알려진 거리에서 측정값이 맞을 때까지)</td></tr>
+    <tr><td>가끔 크게 튐</td><td>반사파(금속·유리)</td><td>원본은 중앙값 3개로만 막음 → 앵커 위치 바꾸기</td></tr>
+    <tr><td>좌우가 반대</td><td>앵커 번호가 시계 방향</td><td><code>bUwbMirror</code> 켜기</td></tr>
+    <tr><td>A→B 실측이 1m와 많이 다름</td><td>A·B를 누를 때 태그가 다른 곳에 있었음 / 좌표 오차</td><td><span class="key">9</span>로 지우고 1초 이상 가만히 둔 채 다시 7·8</td></tr>
+    <tr><td>움직이는데 소리·물결이 없음</td><td>입력이 [1] / 휴대폰이 연결돼 있고 걷기 테스트 전</td><td><span class="key">2</span>, 휴대폰 “걷기 테스트 시작” 또는 휴대폰 앱 끄기</td></tr>
+    <tr><td>진동이 거리와 상관없이 울림</td><td>원본 태그의 고정 리듬(정상 동작)</td><td>거리별 진동이 필요하면 PhoneTwin 20바이트 펌웨어로</td></tr>
+  </table>
+</section>
+
+<!-- ======================================================================= 9 -->
+<section class="p">
+  <h2>9. 남은 확인과 다음 할 일</h2>
+  <h3>아직 확인하지 못한 것</h3>
+  <ul>
+    <li><b>실제 하드웨어 전부</b>: DWM1000 거리 정확도, 실제 갱신 속도, 안테나 지연 보정값, 사람이 가릴 때 끊기는 정도. 이 PC에는 Arduino 개발 환경이 없어 펌웨어 컴파일도 안 해 봄.</li>
+    <li><b>사용자 에디터 Play에서 키 7·8을 직접 누르는 동작</b>. 같은 함수를 콘솔·단위 테스트로, 저장 파일을 실제 실행으로 확인했지만 키 입력 자체는 화면이 있는 Play에서 확인 필요.</li>
+    <li>파이 → PC 네트워크(방화벽, 공유기 설정).</li>
+  </ul>
+  <h3>다음 할 일 (순서대로)</h3>
+  <ol class="steps">
+    <li><b>오늘 바로</b>: 에디터를 켜고 Play → <span class="key">2</span> → <code>py tools\apeficiation_sim.py --walk ab</code> → 6초 안에 <span class="key">7</span>, 12초 안에 <span class="key">8</span> → 점구름 위 관객이 8자로 걷는지 확인.</li>
+    <li><b>팀에 전달</b>: 실제 앵커 좌표(높이는 서로 다르게)를 원본 <code>ANCHOR_POS</code> 두 곳에 같은 값으로, 파이는 <code>--osc-host &lt;PC IP&gt;</code>로 실행.</li>
+    <li><b>현장</b>: PC 방화벽 허용 → 태그를 바닥 A·B에 두고 7·8 → 걸어 보기. 좌우가 반대면 <code>bUwbMirror</code>.</li>
+    <li><b>필요해지면</b>: 사물 거리별 진동, 앵커 3개로도 계산 → PhoneTwin 버전(<code>arduino/</code> 20바이트 + <code>pi/phonetwin_gateway.py</code>)으로 옮김. 언리얼 쪽 변경은 필요 없음.</li>
+  </ol>
+  <div class="box ok">
+    <b class="t">팀이 원본을 고친 경우</b>
+    <p>시뮬레이터는 실행할 때마다 GitHub에서 최신 원본을 받아 오므로 <code>py tools\apeficiation_sim.py --selftest</code>를 한 번 돌리면 바뀐 코드가 언리얼과 여전히 맞는지 바로 알 수 있습니다. OSC 주소·포트·단위(cm)가 바뀌면 언리얼 Details의 <code>UwbOscAddress</code> · <code>UwbOscPort</code> · <code>UwbOscMetresPerUnit</code>만 맞추면 됩니다.</p>
+  </div>
+</section>
+
+</body>
+</html>

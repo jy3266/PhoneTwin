@@ -9,6 +9,11 @@
 #   /phonetwin/nearest  objectId distCm intensity01 contact name  (what the vibration uses; -1 cm = out of range)
 #   /phonetwin/object   index id name label floorCm handCm cx cy cz radiusCm   (one per object, every frame)
 #   /phonetwin/touch    index id name strength                  (once, when the audience touches an object; -1 = scan surface)
+#   /phonetwin/input    source name signalAgeS                  (0 휴대폰 / 1 UWB 태그 or ESP32; seconds since its last packet, -1 = none)
+#   /phonetwin/uwb      residualM anchors fresh                 (UWB gateway quality; the Apeficiation gateway sends none: -1 0 0)
+#   /phonetwin/look     mode on name                            (1 s: Unreal light look 0 예전 빛 1 기억 2 물결 3 별빛, K on/off)
+#   /phonetwin/marks    ax ay bx by source                      (1 s: floor marks A·B, room frame m; source 0 none 1 scan 2 phone)
+#   /phonetwin/shape    index x0 y0 x1 y1 real                  (1 s: an object's floor footprint, room frame m; real 1 = collision shape)
 # Out (to Outhost:Outport, at Outrate Hz)
 #   /td/state      active live sim objectCount
 #   /td/audience   x y z speed headingDeg
@@ -18,6 +23,9 @@
 #   /td/object/<i> proximity floorCm approachCmPerS id name
 #   /td/proximity  proximity of every object, in index order
 #   /td/touch      index id name strength                       (passed on when it happens)
+#   /td/input      source name                                  (who drives the audience: 휴대폰 / UWB 태그 / ESP32)
+#   /td/look       mode on name                                 (Unreal's light look, so lights can follow it)
+#   /td/marks      ax ay bx by source                           (floor marks A·B)
 # Light trail: the 'light_trail' Script TOP keeps a glowing trace of where the audience walked (fades over Trailfade s).
 import math
 
@@ -40,7 +48,13 @@ def reset():
 	         pos=[0.0, 0.0, 0.0], dir=[1.0, 0.0, 0.0], yaw=0.0,
 	         near_id=-1, near_cm=-1.0, near_int=0.0, near_contact=0, near_name='',
 	         objects={}, vel=[0.0, 0.0, 0.0], speed=0.0, accel=0.0, prev=None, prevAt=0.0,
-	         trail=[], sendAcc=0.0, lastTick=None, view=None, glow=None, lastPx=None, flashes=[], touches=[], simNear={})
+	         trail=[], sendAcc=0.0, lastTick=None, view=None, glow=None, lastPx=None, flashes=[], touches=[], simNear={},
+	         input_name='', input_age=-1.0, uwb=[-1.0, 0, 0], look=[2, 1, ''], marks=[0.0, 0.0, 0.0, 0.0, 0], shapes={})
+
+
+def source_name():
+	"""What drives the audience, as Unreal names it (older Unreal: by the source number)."""
+	return S['input_name'] or ('휴대폰' if S['source'] == 0 else 'UWB 태그')
 
 
 reset()
@@ -67,6 +81,19 @@ def handle(address, args, fromSim=False):
 			S['active'], S['walk'], S['source'], S['count'] = int(a[0]), int(a[1]), int(a[2]), int(a[3])
 			for k in [k for k in S['objects'] if k >= S['count']]:
 				del S['objects'][k]
+			for k in [k for k in S['shapes'] if k >= S['count']]:
+				del S['shapes'][k]
+		elif address == '/phonetwin/input':
+			S['source'], S['input_name'] = int(a[0]), str(a[1])
+			S['input_age'] = float(a[2]) if len(a) > 2 else -1.0
+		elif address == '/phonetwin/uwb':
+			S['uwb'] = [float(a[0]), int(a[1]), int(a[2])]
+		elif address == '/phonetwin/look':
+			S['look'] = [int(a[0]), int(a[1]), str(a[2]) if len(a) > 2 else '']
+		elif address == '/phonetwin/marks':
+			S['marks'] = [float(a[0]), float(a[1]), float(a[2]), float(a[3]), int(a[4])]
+		elif address == '/phonetwin/shape':
+			S['shapes'][int(a[0])] = [float(a[1]), float(a[2]), float(a[3]), float(a[4]), int(a[5]) if len(a) > 5 else 1]
 		elif address == '/phonetwin/pos':
 			S['pos'] = [float(a[0]), float(a[1]), float(a[2])]
 			_on_pos(now)
@@ -126,6 +153,11 @@ def simulate(now):
 	yaw = math.degrees(math.atan2(dy, dx))
 	handle('/phonetwin/state', [1, 1, 0, len(SIM_OBJECTS)], True)
 	handle('/phonetwin/scan', ['simulation'], True)
+	handle('/phonetwin/input', [0, '휴대폰 (시뮬레이션)', 0.03], True)
+	handle('/phonetwin/look', [2, 1, '물결'], True)
+	handle('/phonetwin/marks', [0.0, 0.0, 1.0, 0.0, 1], True)
+	for i, (oid, name, label, cx, cy, cz, r) in enumerate(SIM_OBJECTS):
+		handle('/phonetwin/shape', [i, cx - r, cy - r * 0.7, cx + r, cy + r * 0.7, 1], True)
 	handle('/phonetwin/pos', [x, y, 1.2], True)
 	handle('/phonetwin/dir', [math.cos(math.radians(yaw)), math.sin(math.radians(yaw)), 0.0, yaw], True)
 	best = (1e9, -1, '')
@@ -209,6 +241,11 @@ def signals():
 	sig['speed'] = S['speed']
 	sig['accel'] = S['accel']
 	sig['energy'] = _clamp01(S['speed'] / 1.2) if S['active'] else 0.0
+	sig['look'] = S['look'][0]
+	sig['light_on'] = S['look'][1]
+	sig['marks_source'] = S['marks'][4]
+	sig['uwb_residual'] = S['uwb'][0]
+	sig['input_age'] = S['input_age']
 	sig['moving'] = 1 if S['active'] and S['speed'] > 0.15 else 0
 	sig['haptic'] = S['near_int'] if S['active'] else 0.0
 	sig['contact'] = S['near_contact'] if S['active'] else 0
@@ -226,9 +263,14 @@ def signals():
 def _tables():
 	t = op('audience')
 	if t is not None:
-		src = '휴대폰' if S['source'] == 0 else 'ESP32'
+		src = source_name()
 		mode = '실시간' if S['live'] else ('시뮬레이션' if S['sim'] else '신호 없음')
-		rows = [['name', 'value'], ['mode', mode], ['active', S['active']], ['walk', S['walk']], ['source', src], ['scan', S['scan']],
+		mk = S['marks']
+		rows = [['name', 'value'], ['mode', mode], ['active', S['active']], ['walk', S['walk']], ['source', src],
+		        ['input_age_s', '%.2f' % S['input_age']], ['scan', S['scan']],
+		        ['look', '%s%s' % (S['look'][2], '' if S['look'][1] else ' (꺼짐)')],
+		        ['marks', ('A(%.2f,%.2f) B(%.2f,%.2f) %s' % (mk[0], mk[1], mk[2], mk[3], '휴대폰' if mk[4] == 2 else '스캔')) if mk[4] else '없음'],
+		        ['uwb_quality', ('잔차 %.2f m · 앵커 %d' % (S['uwb'][0], S['uwb'][1])) if S['uwb'][2] else '-'],
 		        ['x_m', '%.3f' % S['pos'][0]], ['y_m', '%.3f' % S['pos'][1]], ['z_m', '%.3f' % S['pos'][2]],
 		        ['heading_deg', '%.1f' % S['yaw']], ['speed_mps', '%.3f' % S['speed']],
 		        ['nearest_id', S['near_id']], ['nearest_name', S['near_name']], ['nearest_cm', '%.1f' % S['near_cm']],
@@ -239,10 +281,12 @@ def _tables():
 	t = op('objects')
 	if t is not None:
 		t.clear()
-		t.appendRow(['index', 'id', 'name', 'label', 'floor_cm', 'hand_cm', 'proximity', 'approach_cmps', 'cx', 'cy', 'cz', 'radius_cm'])
+		t.appendRow(['index', 'id', 'name', 'label', 'floor_cm', 'hand_cm', 'proximity', 'approach_cmps', 'cx', 'cy', 'cz', 'radius_cm', 'x0', 'y0', 'x1', 'y1'])
 		for k, o in sorted(S['objects'].items()):
+			sh = S['shapes'].get(k) or ['', '', '', '']
 			t.appendRow([k, o['id'], o['name'], o['label'], '%.1f' % o['cm'], '%.1f' % o['hand'], '%.3f' % o.get('prox', 0.0),
-			             '%.1f' % o['approach'], '%.2f' % o['c'][0], '%.2f' % o['c'][1], '%.2f' % o['c'][2], '%.0f' % o['r']])
+			             '%.1f' % o['approach'], '%.2f' % o['c'][0], '%.2f' % o['c'][1], '%.2f' % o['c'][2], '%.0f' % o['r']] +
+			            [('%.2f' % v) if v != '' else '' for v in sh[:4]])
 
 
 def _monitor():
@@ -251,10 +295,16 @@ def _monitor():
 	lines = ['PHONE TWIN · TouchDesigner',
 	         '입력: OSC :%d  ·  %s' % (int(c.par.Inport.eval()), mode),
 	         '출력: OSC → %s:%d %s' % (c.par.Outhost.eval(), int(c.par.Outport.eval()), '' if c.par.Outactive.eval() else '(꺼짐)')]
+	extra = '언리얼 빛: %s%s' % (S['look'][2] or '-', '' if S['look'][1] else ' (꺼짐)')
+	if S['marks'][4]:
+		extra += '  ·  A·B %s (%.2f m)' % ('휴대폰' if S['marks'][4] == 2 else '스캔', math.hypot(S['marks'][2] - S['marks'][0], S['marks'][3] - S['marks'][1]))
+	if S['uwb'][2]:
+		extra += '  ·  UWB 잔차 %.2f m, 앵커 %d' % (S['uwb'][0], S['uwb'][1])
+	lines.append(extra)
 	if not S['active']:
-		lines.append('대기 중 — 휴대폰에서 "걷기 테스트 시작"을 누르면 시작합니다')
+		lines.append('대기 중 (%s) — 휴대폰에서 "걷기 테스트 시작"을 누르면 시작합니다' % source_name())
 	else:
-		lines.append('관객 (%s)  x %.2f  y %.2f  z %.2f m  ·  %.2f m/s' % ('휴대폰' if S['source'] == 0 else 'ESP32', S['pos'][0], S['pos'][1], S['pos'][2], S['speed']))
+		lines.append('관객 (%s)  x %.2f  y %.2f  z %.2f m  ·  %.2f m/s' % (source_name(), S['pos'][0], S['pos'][1], S['pos'][2], S['speed']))
 		if S['near_cm'] >= 0:
 			lines.append('진동: %s %.1f cm · 세기 %d%%%s' % (S['near_name'], S['near_cm'], round(S['near_int'] * 100), ' · 접촉' if S['near_contact'] else ''))
 		for k, o in sorted(S['objects'].items()):
@@ -279,6 +329,9 @@ def _send():
 	send = out.sendOSC
 	act = 1 if S['active'] else 0
 	send('/td/state', [act, 1 if S['live'] else 0, 1 if (S['sim'] and not S['live']) else 0, len(S['objects'])])
+	send('/td/input', [S['source'], source_name()])
+	send('/td/look', [S['look'][0], S['look'][1], S['look'][2]])
+	send('/td/marks', list(S['marks']))
 	if not act:
 		return
 	p, v = S['pos'], S['vel']
@@ -308,12 +361,20 @@ def _par(name, default):
 def view():
 	"""(cx, cy, ext) of the top view: fits floor mark A and the objects; grows (and restarts the trail) only when the audience walks out of it."""
 	xs, ys = [0.0], [0.0]
-	for o in S['objects'].values():
+	for k, o in S['objects'].items():
+		sh = S['shapes'].get(k)
+		if sh:   # the real footprint; a big circle around a wall would blow the view up
+			xs += [sh[0], sh[2]]
+			ys += [sh[1], sh[3]]
+			continue
 		r = o['r'] / 100
 		xs += [o['c'][0] - r, o['c'][0] + r]
 		ys += [o['c'][1] - r, o['c'][1] + r]
+	if S['marks'][4]:
+		xs.append(S['marks'][2])
+		ys.append(S['marks'][3])
 	v = S['view']
-	key = (len(S['objects']), S['scan'])
+	key = (len(S['objects']), S['scan'], len(S['shapes']), S['marks'][4])
 	if v is None or v[3] != key:
 		cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
 		v = (cx, cy, max(max(xs) - min(xs), max(ys) - min(ys), 3.0) * 1.2, key)
@@ -475,16 +536,40 @@ def draw_map(size=512):
 		Y = int(px(0, gy)[1])
 		if 0 <= Y < H:
 			img[Y, :, :3] = (0.09, 0.13, 0.17) if gy else (0.15, 0.3, 0.2)
-	disc(0, 0, 5, (0.2, 0.83, 0.4))   # floor mark A
+	def rect(x0, y0, x1, y1, color, alpha, w=None):
+		"""Filled (w None) or outlined footprint, room frame metres."""
+		X0, Y0 = px(x0, y0)
+		X1, Y1 = px(x1, y1)
+		X0, X1 = min(X0, X1), max(X0, X1)
+		Y0, Y1 = min(Y0, Y1), max(Y0, Y1)
+		if w is None:
+			blend(X0, X1, Y0, Y1, lambda xx, yy: np.ones_like(xx, bool), color, alpha)
+		else:
+			blend(X0 - w, X1 + w, Y0 - w, Y1 + w, lambda xx, yy: ~((xx > X0 + w) & (xx < X1 - w) & (yy > Y0 + w) & (yy < Y1 - w)), color, alpha)
+
+	# floor marks: A green (origin), B blue, arrow A -> B (= +X, "앞")
+	mk = S['marks']
+	if mk[4]:
+		line(mk[0], mk[1], mk[2], mk[3], (0.9, 0.95, 1.0), 0.8, 2)
+		disc(mk[2], mk[3], 5, (0.25, 0.55, 1.0))
+		disc(mk[0], mk[1], 6, (0.2, 0.83, 0.4))
+	else:
+		disc(0, 0, 5, (0.2, 0.83, 0.4))   # floor mark A
 
 	rng = max(1.0, float(comp().par.Proxrange.eval())) / 100
 	near_id = S['near_id'] if act else None
-	for o in objs:
+	for k, o in sorted(S['objects'].items()):
 		r = max(3.0, o['r'] / 100 * sc)
 		pr = o.get('prox', 0.0)
 		hot = o['id'] == near_id
-		disc(o['c'][0], o['c'][1], r, (0.98, 0.8, 0.08), 0.12 + 0.6 * pr)
-		ring(o['c'][0], o['c'][1], r, 1.2, (1.0, 0.25, 0.15) if hot else (0.98, 0.8, 0.08))
+		edge = (1.0, 0.25, 0.15) if hot else (0.98, 0.8, 0.08)
+		sh = S['shapes'].get(k)
+		if sh:   # the collision's real extent on the floor
+			rect(sh[0], sh[1], sh[2], sh[3], (0.98, 0.8, 0.08), 0.12 + 0.6 * pr)
+			rect(sh[0], sh[1], sh[2], sh[3], edge, 1.0, 1.2)
+		else:
+			disc(o['c'][0], o['c'][1], r, (0.98, 0.8, 0.08), 0.12 + 0.6 * pr)
+			ring(o['c'][0], o['c'][1], r, 1.2, edge)
 		if act and pr > 0:
 			line(S['pos'][0], S['pos'][1], o['c'][0], o['c'][1], (1.0, 0.75 - 0.5 * pr, 0.2), 0.35 + 0.65 * pr, 1 + int(pr * 3))
 	if act:

@@ -487,6 +487,7 @@ private:
 
 	FSocket* Socket = nullptr;
 	FSocket* UwbSocket = nullptr;
+	double OscSlowTime = -1e9;   // last /phonetwin/look · marks · shape (sent once a second)
 	bool bEspFromOsc = false; double UwbHeadingTime = -1e9, UwbResidual = -1, UwbQualityTime = -1e9; int32 UwbAnchors = 0;
 	PhoneTwin::FUwbMarks UwbMarks; bool bUwbHalfMark = false; FVector UwbPendingA = FVector::ZeroVector; FString UwbMarkStatus;
 	FVector UwbRaw = FVector::ZeroVector; TArray<TPair<double, FVector>> UwbRawHist;   // gateway frame, metres (last 2 s)

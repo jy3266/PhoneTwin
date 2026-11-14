@@ -131,10 +131,31 @@ wss://<앱 주소>/ws?room=<방 이름>&role=<phone|esp32|unreal|viewer>&key=<RE
 - 앱 0.4.5부터 휴대폰은 켜자마자 릴레이에 접속하고(기본 주소·방 `arko`·앱에 넣은 키), 같은 Wi-Fi UDP는 설정 9번에서 켜면 함께 보냅니다. 언리얼은 릴레이로 온 휴대폰·ESP32 신호를 1.5초(`RelaySignalTimeout`)까지 끊김으로 보지 않습니다(UDP는 0.5초).
 - `PTU1` — 언리얼 → (릴레이) → viewer: 언리얼이 계산한 **관객 위치**. 휴대폰·ESP32 중 지금 선택된 장치의 위치를 웹에서 볼 수 있게 합니다(초당 15번, 걷기 테스트 중에만 `valid=1`).
   ```
-  PTU1,seq,valid,source,x,y,z,yaw,objectId,distanceMm,intensity
+  PTU1,seq,valid,source,x,y,z,yaw,objectId,distanceMm,intensity,scanId
   ```
   `source` = `phone`|`esp32`, `x,y,z` = 방 좌표 R(m, PTE1과 같음), `yaw` = 도(위에서 봐서 반시계), 나머지는 PTH1과 같음.
+  `scanId`(2026-11-13 추가, 12번째 필드) = 언리얼이 지금 연 스캔. 예전 언리얼은 11개 필드까지만 보냅니다(받는 쪽은 없으면 빈 값으로).
   휴대폰·ESP32는 PTH1만 읽으므로 이 줄은 무시합니다.
+
+### 3-1. 체험자 흔적 (몰입 보기 로그인, 같은 릴레이 서버의 HTTP)
+
+몰입 보기(`immersive.html`)에 들어온 사람이 **아이디 + 숫자 4개 비밀번호**로 들어와 체험을 시작·끝내면, 걸은 길이 작은 빛의 흔적으로 남습니다.
+**현장**(실제 시스템: 언리얼이 보낸 PTU1 걷기) = 푸른 빛, **웹**(브라우저에서 직접 걷기) = 보라 빛. 아이디는 **자기 흔적에만** 표시됩니다.
+
+| 요청 | 본문 / 쿼리 | 응답 |
+|---|---|---|
+| `POST /trails/login` | `{id, pin}` — 아이디 글자·숫자·`_.-` 1~20자, pin 숫자 4개. 없는 아이디면 새로 만듦 | `{ok, token, id, created}` · 틀리면 401(5번 틀리면 10분 잠금, 429) |
+| `POST /trails/start` | `{token, scan, kind: "site"\|"web", room}` | `{ok, sid, kind}` |
+| `POST /trails/add` | `{token, sid, pts: [[x,y,z], …]}` — 웹 걷기만 점을 보냄(방 좌표 R, m, 페이지가 3초마다). 현장은 점 없이 보내도 됨(그 걷기를 "내 것"으로 표시·유지) | `{ok, n}` |
+| `POST /trails/end` | `{token, sid}` | `{ok, kept}` (점 5개 미만 또는 0.5 m 미만이면 저장 안 함) |
+| `GET /trails?scan=<id>&token=<선택>` | | `{ok, id, trails: [{kind, live, mine, t0, t1, pts}]}` — 다른 사람 아이디는 주지 않음 |
+| `GET /trails/status` | | `{ok, trails, visitors, sessions, siteWalks, backup: {configured, last, error}}` |
+
+- 현장 걷기: 언리얼의 PTU1 `valid=1`이 시작, `valid=0` 또는 5초 끊김이 끝. `scanId`가 바뀌어도 새 걷기. 그동안 `kind=site`로 체험 중인 로그인 사용자 모두가 주인으로 기록됩니다.
+- 점은 4 cm 이상 움직였거나 1초가 지났을 때만 남깁니다(흔적 하나 최대 4000점, 전체 최대 3000개).
+- 비밀번호는 scrypt 해시로만 저장. 토큰은 서버 메모리에만 있고 12시간 동안 쓰지 않으면 만료(서버를 다시 켜면 다시 로그인).
+- 저장: `relay/data/trails.json`(git 제외). 환경 변수 `TRAILS_GITHUB_REPO`(`owner/name`, 비공개 저장소) + `TRAILS_GITHUB_TOKEN`(그 저장소만 Contents 읽기/쓰기)이 있으면 2분마다 그 저장소의 `trails.json`에 백업하고, 서버가 비어 있는 채로 켜지면 거기서 복원합니다. 선택: `TRAILS_GITHUB_PATH`, `TRAILS_GITHUB_BRANCH`(main), `TRAILS_BACKUP_S`(120).
+- 시험: `node relay/trails_test.js`(가짜 GitHub 포함), 웹은 `node tools/test_immersive_trails.mjs <PhoneTwin_v4> <스크린샷 폴더>`.
 
 ## 4. OSC — 언리얼 → TouchDesigner → 다른 프로그램
 
@@ -152,6 +173,14 @@ wss://<앱 주소>/ws?room=<방 이름>&role=<phone|esp32|unreal|viewer>&key=<RE
 | `/phonetwin/object` | `index id`(i) `name label`(s) `floorCm handCm`(f) `cx cy cz`(f, m) `radiusCm`(f) — 사물마다 한 개 |
 | `/phonetwin/touch` | `index id`(i) `name`(s) `strength`(f 0~1) — 관객이 사물에 닿은 순간 한 번(계속 닿아 있으면 4초마다 0.55). index −1 = 스캔 표면. 바닥 거리 ≤ TouchDistance(35cm) 또는 손 접촉 |
 
+| `/phonetwin/input` | `source`(i) `name`(s, 휴대폰 / UWB 태그 / ESP32) `signalAgeS`(f, 그 장치의 마지막 신호 뒤 초, −1 = 없음) |
+| `/phonetwin/uwb` | `residualM`(f) `anchors`(i) `fresh`(i) — UWB 게이트웨이 품질. Apeficiation 원본 게이트웨이는 품질을 안 보내므로 `-1 0 0` |
+| `/phonetwin/look` | `mode`(i, 0 예전 빛 · 1 기억 · 2 물결 · 3 별빛) `on`(i, 키 K) `name`(s) — 1초마다 |
+| `/phonetwin/marks` | `ax ay bx by`(f, 방 좌표 R m) `source`(i, 0 없음 · 1 스캔 meta · 2 휴대폰 PTM1) — 바닥 표시 A·B, 1초마다 |
+| `/phonetwin/shape` | `index`(i) `x0 y0 x1 y1`(f, R m) `real`(i, 1 = 콜리전 실제 형태) — 사물의 바닥 외곽 사각형, 1초마다 사물마다 |
+
+(2026-11-13 추가: `input`·`uwb`·`look`·`marks`·`shape`. `state`의 `source` 1은 지금 "UWB 태그(OSC)" 또는 ESP32 — 이름은 `input`을 보세요.)
+
 `floorCm` = 바닥에서 잰 관객 ↔ 사물 표면 거리(소리와 같은 기준), `handCm` = 손(장치) ↔ 사물 표면 3D 거리.
 `active=0`이면 `pos`·`object`는 보내지 않습니다.
 
@@ -167,6 +196,11 @@ TouchDesigner(`Phone_Twin_Project.toe`)가 이것을 받아 움직임 신호로 
 | `/td/object/<index>` | `proximity`(0~1) `floorCm` `approach`(cm/s, 다가오면 +) `id name` |
 | `/td/proximity` | 모든 사물의 proximity (index 순서) |
 | `/td/touch` | `/phonetwin/touch`를 그대로 전달 (닿은 순간) |
+| `/td/input` | `source name` — 지금 관객을 움직이는 입력 |
+| `/td/look` | `mode on name` — 언리얼 빛 모양(조명이 따라가게) |
+| `/td/marks` | `ax ay bx by source` — 바닥 A·B |
+
+TD `signals` CHOP에는 `look`, `light_on`, `marks_source`, `uwb_residual`, `input_age` 채널도 있습니다. 지도(`map`)는 콜리전 외곽 사각형, A 초록·B 파랑·화살표를 그립니다.
 
 `proximity = 1 - floorCm / 근접 범위`(TouchDesigner 설정, 기본 200 cm), 0~1로 자름. 시험: `py tools/osc_test.py both`.
 

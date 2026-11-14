@@ -23,6 +23,35 @@
 
   <div id="status" class="status">불러오는 중…</div>
 
+  <div id="expChip" class="exp-chip" data-state="idle">
+    <span class="dot"></span><span id="chipText">로그인 전</span><span id="chipTime" class="time"></span>
+    <button id="endBtn" hidden>체험 끝내기</button>
+    <button id="chipStart">체험 시작</button>
+  </div>
+
+  <div id="gate" class="gate" data-mode="login">
+    <div class="gate-card" role="dialog" aria-labelledby="gateTitle">
+      <h1 id="gateTitle">몰입 보기</h1>
+      <p class="gate-lead">걸어간 길이 작은 빛의 흔적으로 남습니다.<br><span class="c-site">● 현장에서 체험</span>한 사람은 푸른 빛, <span class="c-web">● 웹에서 체험</span>한 사람은 보라 빛.</p>
+      <form id="gateForm" class="gate-login" autocomplete="off">
+        <label>아이디<input id="gateId" maxlength="20" autocomplete="username" autocapitalize="off" spellcheck="false" required></label>
+        <label>비밀번호 (숫자 4개)<input id="gatePin" type="password" inputmode="numeric" pattern="\d{4}" maxlength="4" autocomplete="current-password" required></label>
+        <button type="submit" class="primary">체험 시작</button>
+        <p class="gate-note">처음 쓰는 아이디는 새로 만들어집니다. 같은 아이디와 비밀번호로 다시 들어오면 내 흔적이 이름과 함께 보입니다. 다른 사람에게는 이름 없이 빛만 보입니다.</p>
+      </form>
+      <div class="gate-again">
+        <p><b id="gateAgainName"></b></p>
+        <button id="gateAgain" class="primary">다시 체험하기</button>
+        <button id="gateLook">흔적만 둘러보기</button>
+        <button id="gateSwitch">다른 아이디로</button>
+      </div>
+      <div class="gate-offline">
+        <button id="gateOffline" class="primary">기록 없이 둘러보기</button>
+      </div>
+      <p id="gateMsg" class="gate-msg" aria-live="polite"></p>
+    </div>
+  </div>
+
   <button id="panelBtn" class="panel-btn" aria-label="설정 열기">⚙</button>
   <aside id="panel" class="panel">
     <label class="field">스캔<select id="scan"></select></label>
@@ -47,6 +76,9 @@
     <label class="slider">점 크기 <input id="size" type="range" min="0.5" max="4" step="0.1" value="1.4"><output></output></label>
     <label class="check"><input id="bloom" type="checkbox" checked> 빛 번짐(블룸)</label>
     <label class="check"><input id="showMe" type="checkbox" checked> 관객을 빛 나비로 표시</label>
+    <div class="label">체험자 흔적</div>
+    <label class="check"><input id="showTrails" type="checkbox" checked> 빛의 흔적 보기</label>
+    <p class="legend"><span class="c-site">● 푸른 빛 = 현장</span> <span class="c-web">● 보라 빛 = 웹</span><br><span id="trailCount">불러오는 중…</span></p>
     <p class="hint">관객 위치는 릴레이(언리얼이 보낸 위치 → 없으면 휴대폰 → UWB 태그)를 따릅니다. <b>시스템이 연결돼 있으면 실제 사람의 움직임만 따르고</b> 키보드·클릭 걷기는 꺼집니다(걷기 테스트 전에는 마지막 자리에서 기다림). 연결이 없으면 방 안을 천천히 걷는 시연을 보여 주고, <b>W A S D / 방향키</b>나 바닥 클릭으로 직접 걸어 볼 수 있고, <b>Q</b>는 위로, <b>E</b>는 아래로 갑니다. <b>F</b> 전체 화면, <b>H</b> 이 창 숨기기.</p>
     <p class="hint touch-only"><b>휴대폰</b>: ✋ 버튼을 누르면 휴대폰을 든 손을 돌리고 기울이는 대로 시선이 움직입니다. 한 손가락으로 끌면 둘러보기, 두 손가락 벌리기·오므리기는 거리, 길게 누르면 보는 쪽으로 걷기(연결 없을 때), 두 번 탭하면 정면으로 되돌리기.</p>
   </aside>

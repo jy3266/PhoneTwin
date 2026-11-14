@@ -498,6 +498,41 @@ void APhoneTwinScanActor::SendOsc()
 	SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/state")).Int(bTracking ? 1 : 0).Int(IsStarted() ? 1 : 0)
 		.Int(Source == EPhoneTwinSource::Phone ? 0 : 1).Int(Objects.Num()).Encode());
 	SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/scan")).Str(LoadedScanId).Encode());
+
+	// which input drives the audience, and how fresh it is
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0;
+	const bool bPhoneIn = Source == EPhoneTwinSource::Phone;
+	const FLink& In = bPhoneIn ? Phone : Esp;
+	SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/input")).Int(bPhoneIn ? 0 : 1)
+		.Str(bPhoneIn ? TEXT("휴대폰") : (bEspFromOsc ? TEXT("UWB 태그") : TEXT("ESP32"))).Float(In.Packets > 0 ? (float)(Now - In.LastTime) : -1.f).Encode());
+	if (!bPhoneIn && bEspFromOsc)   // UWB gateway quality: residual m, anchors used, fresh (the Apeficiation gateway sends none -> -1 0 0)
+	{
+		const bool bFresh = Now - UwbQualityTime < 2.0;
+		SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/uwb")).Float(bFresh ? (float)UwbResidual : -1.f).Int(bFresh ? UwbAnchors : 0).Int(bFresh ? 1 : 0).Encode());
+	}
+	if (Now - OscSlowTime >= 1.0)   // things that rarely change: once a second
+	{
+		OscSlowTime = Now;
+		SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/look")).Int((int32)Look).Int(bLightUp ? 1 : 0).Str(LookText()).Encode());
+		FVector MA, MB; bool bPhoneMarks = false;
+		if (MarksAB(MA, MB, bPhoneMarks))
+		{
+			const FVector RA = Room(MA), RB = Room(MB);
+			SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/marks")).Float(RA.X).Float(RA.Y).Float(RB.X).Float(RB.Y).Int(bPhoneMarks ? 2 : 1).Encode());
+		}
+		else SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/marks")).Float(0).Float(0).Float(0).Float(0).Int(0).Encode());
+		// each object's floor footprint (room frame, m): the real collision shape's extent instead of a circle
+		for (int32 i = 0; i < Objects.Num(); i++)
+		{
+			const FObjectUE& O = Objects[i];
+			FVector2D Lo(1e9, 1e9), Hi(-1e9, -1e9);
+			const double Pad = O.Cells.Num() ? O.CellR : O.R;
+			if (O.Cells.Num()) for (const FVector& Cell : O.Cells) { const FVector R = Room(Cell); Lo.X = FMath::Min(Lo.X, R.X); Lo.Y = FMath::Min(Lo.Y, R.Y); Hi.X = FMath::Max(Hi.X, R.X); Hi.Y = FMath::Max(Hi.Y, R.Y); }
+			else { const FVector R = Room(O.C); Lo = Hi = FVector2D(R.X, R.Y); }
+			const float P = (float)(Pad / 100.0);
+			SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/shape")).Int(i).Float(Lo.X - P).Float(Lo.Y - P).Float(Hi.X + P).Float(Hi.Y + P).Int(O.Cells.Num() ? 1 : 0).Encode());
+		}
+	}
 	if (!bTracking) return;
 	const FVector P = TrackerRoomM(), F = Room(TrackerRot.Vector() * 100.0);
 	SendBytes(OscAddress, OscPort, FOscMessage(TEXT("/phonetwin/pos")).Float(P.X).Float(P.Y).Float(P.Z).Encode());
@@ -519,7 +554,7 @@ void APhoneTwinScanActor::SendWeb()
 	// the web viewer listens on the relay as "viewer"; one PTU1 line shows the audience whichever device drives it
 	if (!Relay.IsValid() || !Relay->IsConnected() || (!bTracking && !bWebValid)) return;
 	bWebValid = bTracking;
-	Relay->Send(PhoneTwin::MakePTU(++WebSeq, bTracking, Source == EPhoneTwinSource::Phone ? TEXT("phone") : TEXT("esp32"), TrackerRoomM(), -TrackerRot.Yaw, ObjectId, DistanceCm, Intensity));
+	Relay->Send(PhoneTwin::MakePTU(++WebSeq, bTracking, Source == EPhoneTwinSource::Phone ? TEXT("phone") : TEXT("esp32"), TrackerRoomM(), -TrackerRot.Yaw, ObjectId, DistanceCm, Intensity, LoadedScanId));
 }
 
 void APhoneTwinScanActor::SendHaptics()

@@ -57,3 +57,43 @@ select { width: 100%; background: #0d141c; color: var(--text); border: 1px solid
   .panel { top: auto; bottom: 56px; right: 12px; left: 12px; width: auto; max-height: 55vh; }
   .panel-btn { top: 12px; }
 }
+
+/* visitors: sign-in gate, experience chip, trail legend */
+.c-site { color: #6fb8ff; }
+.c-web { color: #c18bff; }
+.legend { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.gate { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 16px;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, .35), rgba(0, 0, 0, .78)); }
+.gate.hidden { display: none; }
+.gate-card { width: min(380px, 100%); padding: 22px 22px 18px; border-radius: 16px; background: rgba(10, 14, 22, .9);
+  border: 1px solid var(--line); backdrop-filter: blur(12px); box-shadow: 0 0 40px rgba(120, 140, 255, .18); }
+.gate-card h1 { margin: 0 0 6px; font-size: 20px; letter-spacing: .02em; }
+.gate-lead { margin: 0 0 14px; color: var(--muted); }
+.gate-login, .gate-again, .gate-offline { display: none; gap: 10px; }
+.gate[data-mode="login"] .gate-login, .gate[data-mode="again"] .gate-again, .gate[data-mode="offline"] .gate-offline { display: grid; }
+.gate-login label { display: grid; gap: 4px; color: var(--muted); }
+.gate-login input { font: inherit; font-size: 16px; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line);
+  background: #0d141c; color: var(--text); }
+.gate-login input#gatePin { letter-spacing: .5em; font-variant-numeric: tabular-nums; }
+.gate button { font: inherit; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: transparent;
+  color: var(--text); cursor: pointer; }
+.gate button.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+.gate-note { margin: 2px 0 0; color: var(--muted); font-size: 11.5px; }
+.gate-again p { margin: 0; }
+.gate-msg { margin: 10px 0 0; min-height: 1.2em; color: #ffc48a; }
+.exp-chip { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px 4px 12px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line);
+  backdrop-filter: blur(8px); z-index: 4; white-space: nowrap; max-width: calc(100vw - 200px); }
+.exp-chip .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.exp-chip[data-state="site"] .dot { background: #4fa9ff; box-shadow: 0 0 10px #4fa9ff; }
+.exp-chip[data-state="web"] .dot { background: #b36dff; box-shadow: 0 0 10px #b36dff; }
+.exp-chip #chipText { overflow: hidden; text-overflow: ellipsis; }
+.exp-chip .time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.exp-chip button { font: inherit; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: transparent;
+  color: var(--text); cursor: pointer; }
+.exp-chip button#endBtn { border-color: #ff9a7a; color: #ffb59c; }
+.gated .exp-chip, .hide-ui .exp-chip { display: none; }
+@media (max-width: 560px) {
+  .exp-chip { top: 56px; max-width: calc(100vw - 24px); }
+  .toast { top: 100px; }
+}

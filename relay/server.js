@@ -5,6 +5,7 @@
 'use strict';
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const trails = require('./trails');   // 몰입 보기 visitors' walks (sign-in, light trails) — PROTOCOL.md §3-1
 
 const PORT = Number(process.env.PORT) || 8080;
 const RELAY_KEY = process.env.RELAY_KEY || '';
@@ -31,6 +32,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ ok: true, service: 'phonetwin-relay', uptime_s: Math.round((Date.now() - started) / 1000), forwarded, keyRequired: !!RELAY_KEY, rooms: list }));
     return;
   }
+  if (trails.handle(req, res)) return;
   res.writeHead(404); res.end('not found');
 });
 
@@ -59,6 +61,7 @@ server.on('upgrade', (req, socket, head) => {
       if (isBinary) return;
       const text = data.toString();
       if (text.startsWith('PTR1,ping,')) { ws.send(text.replace('PTR1,ping,', 'PTR1,pong,')); return; }
+      if (role === 'unreal' && text.includes('PTU1')) for (const l of text.split('\n')) if (l.startsWith('PTU1')) trails.onUnrealLine(room, l);
       const to = ROUTES[role];
       if (!to.length) return;
       for (const c of rooms.get(room)) {
@@ -88,4 +91,6 @@ setInterval(() => {
   }
 }, 2000);
 
-server.listen(PORT, () => console.log(`phonetwin relay on :${PORT}${RELAY_KEY ? ' (key required)' : ' (no key!)'}`));
+trails.init().finally(() => server.listen(PORT, () => console.log(`phonetwin relay on :${PORT}${RELAY_KEY ? ' (key required)' : ' (no key!)'}`)));
+// App Platform stops the container with SIGTERM on every deploy: close open walks and push the last backup first
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { trails.flush().finally(() => process.exit(0)); setTimeout(() => process.exit(0), 8000).unref(); });

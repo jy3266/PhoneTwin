@@ -404,11 +404,13 @@ FString MakePTH(uint32 Seq, bool bValid, float Intensity01, bool bContact, int32
 	return FString::Printf(TEXT("PTH1,%u,%d,%d,%d,%d,%d\n"), Seq, bValid ? 1 : 0, FMath::RoundToInt(FMath::Clamp(Intensity01, 0.f, 1.f) * 255.f), bContact ? 1 : 0, ObjectId, Mm);
 }
 
-FString MakePTU(uint32 Seq, bool bValid, const FString& Source, const FVector& RoomM, double YawDeg, int32 ObjectId, double DistanceCm, float Intensity01)
+FString MakePTU(uint32 Seq, bool bValid, const FString& Source, const FVector& RoomM, double YawDeg, int32 ObjectId, double DistanceCm, float Intensity01, const FString& ScanId)
 {
 	const int32 Mm = !bValid || DistanceCm < 0 || DistanceCm >= 1e7 ? -1 : FMath::RoundToInt(FMath::Min(DistanceCm, 6500.0) * 10.0);
-	return FString::Printf(TEXT("PTU1,%u,%d,%s,%.3f,%.3f,%.3f,%.1f,%d,%d,%d\n"), Seq, bValid ? 1 : 0, *Source, RoomM.X, RoomM.Y, RoomM.Z, YawDeg,
-		ObjectId, Mm, FMath::RoundToInt(FMath::Clamp(Intensity01, 0.f, 1.f) * 255.f));
+	// commas would split the line; scan ids are file names, so this only guards odd ones
+	const FString Scan = ScanId.Replace(TEXT(","), TEXT("_")).Replace(TEXT("\n"), TEXT(""));
+	return FString::Printf(TEXT("PTU1,%u,%d,%s,%.3f,%.3f,%.3f,%.1f,%d,%d,%d%s%s\n"), Seq, bValid ? 1 : 0, *Source, RoomM.X, RoomM.Y, RoomM.Z, YawDeg,
+		ObjectId, Mm, FMath::RoundToInt(FMath::Clamp(Intensity01, 0.f, 1.f) * 255.f), Scan.IsEmpty() ? TEXT("") : TEXT(","), *Scan);
 }
 
 // ---- OSC
