@@ -107,6 +107,7 @@ try {
   await B.click('#endBtn'); await B.waitForFunction(() => document.getElementById('gate').dataset.mode === 'again', { timeout: 8000 });
   await B.click('#gateLook'); await sleep(1200);
   s = await st(B);
+  check('earlier visitors are barely there, mine is bright', await B.evaluate(() => { const L = window.__immersive.trails.layers; return L.web.material.uniforms.uAlpha.value < 0.2 && L.web.material.uniforms.uWidth.value < L.siteMine.material.uniforms.uWidth.value && L.siteMine.material.uniforms.uAlpha.value > 0.8; }));
   check('B sees A\'s web trail (purple, no id) and own site trail (blue, mine)', s.layers.web > 20 && s.layers.siteMine > 20 && s.layers.webMine === 0, s.layers);
   check('legend counts', /현장 1 · 웹 1 · 내 흔적 1/.test(s.count), s.count);
   ue.close();
@@ -151,11 +152,19 @@ try {
     return b && b.offsetParent !== null && b.getBoundingClientRect().top > sub.getBoundingClientRect().top; }));
   await E.click('#gateBrowse'); await sleep(1500);
   s = await st(E);
-  check('without signing in: every trail shown, none marked mine, no tail', !s.gate && s.phase === 'review' && s.shown && s.dim < 0.5 && s.layers.web > 20 && s.layers.site > 20 && s.layers.webMine === 0 && s.layers.siteMine === 0 && !s.id
+  check('without signing in: every trail shown, the latest bright, earlier faint, no id, no tail', !s.gate && s.phase === 'review' && s.shown && s.dim < 0.5 && s.layers.webMine + s.layers.siteMine > 20 && s.layers.web + s.layers.site > 20 && !s.id
     && await E.evaluate(() => !window.__immersive.trails.label.visible && !window.__immersive.trails.tail.visible) && /로그인 없이/.test(s.chip), s);
   const after = await (await fetch(`http://127.0.0.1:${RELAY}/trails/status`)).json();
   check('looking records nothing', after.visitors === before.visitors && after.sessions === before.sessions && after.trails === before.trails, { before, after });
   await E.screenshot({ path: path.join(OUT, '6_guest.png') });
+  // ---------------- "흔적 없이 둘러보기": the space only
+  const F = await openPage(await browser.createBrowserContext());
+  await F.waitForFunction(() => window.__immersive.trails.state.ready, { timeout: 10000 });
+  await F.click('#gateFree'); await sleep(1200);
+  s = await st(F);
+  check('"흔적 없이 둘러보기": the space only, no trails, no tail, nothing recorded', !s.gate && s.phase === 'idle' && !s.shown && s.dim === 1 && /흔적 없이/.test(s.chip)
+    && await F.evaluate(() => !window.__immersive.trails.tail.visible) && (await (await fetch(`http://127.0.0.1:${RELAY}/trails/status`)).json()).visitors === before.visitors, s);
+  await F.close();
   await E.click('#chipStart'); await sleep(300);
   check('"체험 시작" from looking opens the sign-in', (await st(E)).mode === 'login' && (await st(E)).gate);
 

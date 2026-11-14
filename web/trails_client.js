@@ -61,7 +61,8 @@ export function createTrails(o) {
   $('gatePin').addEventListener('input', (e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); });
   $('gateAgain').addEventListener('click', () => startExperience());
   $('gateSwitch').addEventListener('click', () => { $('gateId').value = ''; $('gatePin').value = ''; signedOut('새 아이디와 비밀번호(숫자 4개)를 정해 주세요'); });
-  $('gateBrowse').addEventListener('click', () => { hideGate(); st.guest = true; updateChip(); o.toast('로그인 없이 흔적 보기 · 아무것도 기록되지 않습니다'); });
+  $('gateFree').addEventListener('click', () => { hideGate(); st.guest = false; st.ended = 'free'; updateChip(); o.toast('흔적 없이 공간만 둘러보기 · 아무것도 기록되지 않습니다'); });
+  $('gateBrowse').addEventListener('click', () => { hideGate(); st.guest = true; st.ended = null; updateChip(); o.toast('로그인 없이 흔적 보기 · 아무것도 기록되지 않습니다'); });
   $('gateLook').addEventListener('click', () => { hideGate(); st.ended = 'look'; updateChip(); });
   $('gateOffline').addEventListener('click', () => { hideGate(); st.ended = 'offline'; updateChip(); });
   $('endBtn').addEventListener('click', () => endExperience(true));
@@ -149,7 +150,7 @@ export function createTrails(o) {
     const chip = $('expChip');
     chip.dataset.state = st.sid ? st.kind : 'idle';
     $('chipText').textContent = st.sid ? `${st.id} · ${st.kind === 'site' ? '현장 체험 중 (푸른 빛)' : '웹 체험 중 (보라 빛)'}` :
-      st.ended === 'offline' ? '기록 없이 보는 중' : st.guest ? '로그인 없이 흔적 보기' : st.token ? `${st.id} · ${st.done ? '체험 끝 · 모든 흔적 보기' : '체험 전'}` : '로그인 전';
+      st.ended === 'offline' ? '기록 없이 보는 중' : st.ended === 'free' ? '흔적 없이 둘러보는 중' : st.guest ? '로그인 없이 흔적 보기' : st.token ? `${st.id} · ${st.done ? '체험 끝 · 모든 흔적 보기' : '체험 전'}` : '로그인 전';
     $('endBtn').hidden = !st.sid; $('chipStart').hidden = !!st.sid || st.ended === 'offline';
   }
   setInterval(() => { if (st.sid) $('chipTime').textContent = fmt((performance.now() - st.t0) / 1000); else $('chipTime').textContent = ''; }, 500);
@@ -191,8 +192,8 @@ export function createTrails(o) {
   }
   const white = new THREE.Color(1, 1, 1);
   const layers = {
-    site: new THREE.Mesh(new THREE.BufferGeometry(), material(COLORS.site, 0.45, 0.05)),
-    web: new THREE.Mesh(new THREE.BufferGeometry(), material(COLORS.web, 0.45, 0.05)),
+    site: new THREE.Mesh(new THREE.BufferGeometry(), material(COLORS.site, 0.11, 0.03)),   // earlier visitors: barely there
+    web: new THREE.Mesh(new THREE.BufferGeometry(), material(COLORS.web, 0.11, 0.03)),
     siteMine: new THREE.Mesh(new THREE.BufferGeometry(), material(COLORS.site.clone().lerp(white, 0.3), 0.95, 0.09)),
     webMine: new THREE.Mesh(new THREE.BufferGeometry(), material(COLORS.web.clone().lerp(white, 0.3), 0.95, 0.09)),
   };
@@ -281,10 +282,13 @@ export function createTrails(o) {
     const buckets = { site: empty(), web: empty(), siteMine: empty(), webMine: empty() };
     let total = 0, lastMine = null, lastMineKind = 'web';
     const counts = { site: 0, web: 0, mine: 0 };
-    for (const t of st.trails.slice(-500)) {
+    const list = st.trails.slice(-500);
+    // bright = the one who just finished: my own walk, or (looking without an id) the most recent experience
+    const latest = list.some((t) => t.mine) ? null : list.reduce((a, t) => (!a || (t.t1 || 0) > (a.t1 || 0) ? t : a), null);
+    for (const t of list) {
       counts[t.kind]++; if (t.mine) counts.mine++;
       if (total > MAX_DRAW_POINTS) continue;
-      const b = buckets[t.kind + (t.mine ? 'Mine' : '')];
+      const b = buckets[t.kind + (t.mine || t === latest ? 'Mine' : '')];
       for (const s of strokes(t.pts.map(toScan))) { addRibbon(b, s, t.live ? 1 : 0); total += s.length; }
       if (t.mine && t.pts.length) { lastMine = toScan(t.pts[t.pts.length - 1]); lastMineKind = t.kind; }
     }
