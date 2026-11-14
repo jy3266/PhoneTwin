@@ -153,9 +153,10 @@ wss://<앱 주소>/ws?room=<방 이름>&role=<phone|esp32|unreal|viewer>&key=<RE
 | `GET /trails?scan=<id>&token=<선택>` | | `{ok, id, trails: [{kind, live, mine, t0, t1, pts}]}` — 다른 사람 아이디는 주지 않음 |
 | `GET /trails/status` | | `{ok, trails, visitors, sessions, siteWalks, backup: {configured, last, error}}` |
 
+- **보이는 방식**(2026-11-14): 체험 중에는 흔적을 그리지 않고 공간 탐험만 보여 줍니다(기록은 계속). 체험이 끝나면 "흔적 보기" — 방 전체를 위에서 보는 자유 카메라, 점구름은 어둡게, 모든 흔적을 나비가 날아간 높이 그대로의 **빛나는 선**(화면을 향한 리본, 빛이 선을 따라 흐름)으로, 내 흔적은 더 굵고 밝게 + 이름표.
 - **체험은 아이디 하나에 한 번**(2026-11-14): 첫 `start`에서 `used`, `end`(final)·창 닫기(sendBeacon)·2분 동안 아무 신호 없음에서 `done`. `used`인 아이디는 다시 로그인할 수 없고(409), 다시 하려면 새 아이디를 만듭니다. 한 번의 방문 안에서 페이지가 자동으로 다시 시작하는 것(현장↔웹, 스캔 변경)은 `final:false`라 같은 체험입니다.
 - 현장 걷기: 언리얼의 PTU1 `valid=1`이 시작, `valid=0` 또는 5초 끊김이 끝. `scanId`가 바뀌어도 새 걷기. 그동안 `kind=site`로 체험 중인 로그인 사용자 모두가 주인으로 기록됩니다.
-- 점은 4 cm 이상 움직였거나 1초가 지났을 때만 남깁니다(흔적 하나 최대 4000점, 전체 최대 3000개).
+- 점은 높이를 포함해 4 cm 이상 움직였거나 1초가 지났을 때만 남깁니다(흔적 하나 최대 4000점, 전체 최대 3000개).
 - 비밀번호는 scrypt 해시로만 저장. 토큰은 서버 메모리에만 있고 12시간 동안 쓰지 않으면 만료(서버를 다시 켜면 다시 로그인).
 - 저장: `relay/data/trails.json`(git 제외). 환경 변수 `TRAILS_GITHUB_REPO`(`owner/name`, 비공개 저장소) + `TRAILS_GITHUB_TOKEN`(그 저장소만 Contents 읽기/쓰기)이 있으면 2분마다 그 저장소의 `trails.json`에 백업하고, 서버가 비어 있는 채로 켜지면 거기서 복원합니다. 선택: `TRAILS_GITHUB_PATH`, `TRAILS_GITHUB_BRANCH`(main), `TRAILS_BACKUP_S`(120).
 - 시험: `node relay/trails_test.js`(가짜 GitHub 포함), 웹은 `node tools/test_immersive_trails.mjs <PhoneTwin_v4> <스크린샷 폴더>`.

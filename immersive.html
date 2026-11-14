@@ -76,9 +76,11 @@
     <label class="slider">점 크기 <input id="size" type="range" min="0.5" max="4" step="0.1" value="1.4"><output></output></label>
     <label class="check"><input id="bloom" type="checkbox" checked> 빛 번짐(블룸)</label>
     <label class="check"><input id="showMe" type="checkbox" checked> 관객을 빛 나비로 표시</label>
-    <div class="label">체험자 흔적</div>
+    <div class="trail-ui">
+    <div class="label">체험자 흔적 <small>(체험이 끝나면 보입니다)</small></div>
     <label class="check"><input id="showTrails" type="checkbox" checked> 빛의 흔적 보기</label>
     <p class="legend"><span class="c-site">● 푸른 빛 = 현장</span> <span class="c-web">● 보라 빛 = 웹</span><br><span id="trailCount">불러오는 중…</span></p>
+    </div>
     <p class="hint">관객 위치는 릴레이(언리얼이 보낸 위치 → 없으면 휴대폰 → UWB 태그)를 따릅니다. <b>시스템이 연결돼 있으면 실제 사람의 움직임만 따르고</b> 키보드·클릭 걷기는 꺼집니다(걷기 테스트 전에는 마지막 자리에서 기다림). 연결이 없으면 방 안을 천천히 걷는 시연을 보여 주고, <b>W A S D / 방향키</b>나 바닥 클릭으로 직접 걸어 볼 수 있고, <b>Q</b>는 위로, <b>E</b>는 아래로 갑니다. <b>F</b> 전체 화면, <b>H</b> 이 창 숨기기.</p>
     <p class="hint touch-only"><b>휴대폰</b>: ✋ 버튼을 누르면 휴대폰을 든 손을 돌리고 기울이는 대로 시선이 움직입니다. 한 손가락으로 끌면 둘러보기, 두 손가락 벌리기·오므리기는 거리, 길게 누르면 보는 쪽으로 걷기(연결 없을 때), 두 번 탭하면 정면으로 되돌리기.</p>
   </aside>

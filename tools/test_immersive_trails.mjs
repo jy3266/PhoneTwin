@@ -41,6 +41,7 @@ async function openPage(ctx, mobile) {
   return page;
 }
 const st = (page) => page.evaluate(() => { const t = window.__immersive.trails.state; return { sid: t.sid, kind: t.kind, id: t.id, ready: t.ready, n: t.trails.length,
+  phase: window.__immersive.trails.phase, shown: window.__immersive.trails.layers.web.parent.visible, dim: window.__immersive.uniforms.uDim.value,
   mode: document.getElementById('gate').dataset.mode, gate: !document.getElementById('gate').classList.contains('hidden'),
   chip: document.getElementById('chipText').textContent, msg: document.getElementById('gateMsg').textContent, count: document.getElementById('trailCount').textContent,
   layers: Object.fromEntries(Object.entries(window.__immersive.trails.layers).map(([k, l]) => [k, l.geometry.getAttribute('position') ? l.geometry.getAttribute('position').count : 0])) }; });
@@ -63,12 +64,14 @@ try {
   await A.keyboard.down('w'); await sleep(2500); await A.keyboard.down('d'); await sleep(1500); await A.keyboard.up('d'); await sleep(1000); await A.keyboard.up('w');
   await sleep(1500);
   s = await st(A);
-  check('my walk is drawn while walking (purple, mine)', s.layers.webMine > 20, s.layers);
+  check('while exploring no trails are drawn (the space only)', s.phase === 'explore' && !s.shown && s.layers.webMine === 0 && s.dim === 1, s);
+  check('exploring folds the settings away', await A.evaluate(() => document.getElementById('panel').classList.contains('hidden')));
   await A.screenshot({ path: path.join(OUT, '2_walking.png') });
   await A.click('#endBtn');
   await A.waitForFunction(() => document.getElementById('gate').dataset.mode === 'again' && !document.getElementById('gate').classList.contains('hidden'), { timeout: 8000 });
   s = await st(A);
   check('ending shows the summary', /흔적이 남았습니다/.test(s.msg), s.msg);
+  check('finished: review = trails shown, space dimmed, whole-room view', s.phase === 'review' && s.shown && s.dim < 0.5 && await A.evaluate(() => document.querySelector('#cam .on').dataset.v === 'orbit'), s);
   check('after ending: no "start again", only a new id or browsing', await A.evaluate(() => document.getElementById('gateAgain').hidden && !document.getElementById('gateSwitch').hidden && document.getElementById('gateSwitch').classList.contains('primary')));
   await A.click('#gateLook'); await sleep(1500);
   s = await st(A);
@@ -94,7 +97,7 @@ try {
   await sleep(6000);
   await B.evaluate(() => window.__immersive.trails.refresh()); await sleep(800);
   s = await st(B);
-  check('live site walk is drawn blue and mine', s.layers.siteMine > 20, s.layers);
+  check('on-site experience: the live walk is recorded but not drawn', s.phase === 'explore' && !s.shown && s.layers.siteMine === 0 && (await (await fetch(`http://127.0.0.1:${RELAY}/trails?scan=${SCAN}`)).json()).trails.some((t) => t.kind === 'site' && t.live), s);
   await B.screenshot({ path: path.join(OUT, '4_site_mobile.png') });
   clearInterval(walk); ue.send(`PTU1,${++seq},0,phone,0,0,0,0.0,-1,-1,0,${SCAN}\n`); await sleep(300);
   await B.click('#endBtn'); await B.waitForFunction(() => document.getElementById('gate').dataset.mode === 'again', { timeout: 8000 });
@@ -133,7 +136,8 @@ try {
   check('"새 아이디로 체험하기" opens an empty sign-in', s.mode === 'login' && (await A.$eval('#gateId', (e) => e.value)) === '', s);
   await A.type('#gateId', '별빛2'); await A.type('#gatePin', '1111'); await A.click('#gateForm button[type=submit]');
   await A.waitForFunction(() => window.__immersive.trails.state.sid, { timeout: 8000 });
-  check('a new id starts a new experience', (await st(A)).id === '별빛2');
+  s = await st(A);
+  check('a new id starts a new experience, back to exploring', s.id === '별빛2' && s.phase === 'explore' && !s.shown && s.dim === 1 && await A.evaluate(() => document.querySelector('#cam .on').dataset.v === 'follow'), s);
 
   // ---------------- relay without the trail API: browse without recording
   const D = await (await browser.createBrowserContext()).newPage();

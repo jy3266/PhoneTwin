@@ -66,7 +66,7 @@ function updateMemory(dt, p, radius, halfLife) {
 // ---------------------------------------------------------------- the point shader
 const uniforms = {
   uTime: { value: 0 }, uAud: { value: new THREE.Vector3() }, uRadius: { value: 1.6 }, uScatter: { value: 0.6 },
-  uSize: { value: 0.014 }, uScale: { value: 500 }, uMode: { value: 1 }, uWave: { value: [0, 1, 2, 3].map(() => new THREE.Vector4(0, 0, 0, 99)) }, uWaveAmp: { value: [0, 0, 0, 0] }, uGain: { value: 1 },
+  uSize: { value: 0.014 }, uScale: { value: 500 }, uMode: { value: 1 }, uWave: { value: [0, 1, 2, 3].map(() => new THREE.Vector4(0, 0, 0, 99)) }, uWaveAmp: { value: [0, 0, 0, 0] }, uGain: { value: 1 }, uDim: { value: 1 },
   uMem: { value: memTex }, uMemRect: { value: memRect }, uFloor: { value: 0 },
 };
 const pointMat = new THREE.ShaderMaterial({
@@ -117,14 +117,14 @@ const pointMat = new THREE.ShaderMaterial({
       vA = mix(farA, 1.0, lit) * smoothstep(0.2, 0.7, -mv.z);   // no huge dots right against the lens
     }`,
   fragmentShader: /* glsl */`
-    uniform float uGain;
+    uniform float uGain, uDim;
     varying vec3 vCol;
     varying float vA;
     void main() {
       float r = length(gl_PointCoord - 0.5);
       if (r > 0.5) discard;
       float s = smoothstep(0.5, 0.05, r);
-      gl_FragColor = vec4(vCol, min(1.0, vA * s * uGain));
+      gl_FragColor = vec4(vCol, min(1.0, vA * s * uGain * uDim));
     }`,
 });
 let cloud = null;
@@ -665,7 +665,7 @@ function frame() {
   for (const w of uniforms.uWave.value) if (w.w < 99) w.w += dt;
   if ((touchAcc += dt) > 1 / 15) { touchAcc = 0; checkTouches(p, now); }
 
-  trails.tick(p, now); trails.frame(dt, uniforms.uScale.value);
+  trails.tick(p, now); trails.frame(dt, uniforms.uScale.value, renderer.domElement.width, renderer.domElement.height);
 
   me.position.copy(p); pool.position.set(p.x, floorY + 0.01, p.z);
   pool.scale.setScalar(uniforms.uRadius.value * 1.4);
@@ -714,7 +714,19 @@ const trails = createTrails({
   getMeta: () => meta, getFloorY: () => floorY, getScan: () => info.scan,
   isSite: () => systemOn(performance.now()),
   apiBase: () => relayConfig().base.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://'),
+  onPhase,
 });
+// explore: an experience is on — only the space (no trails, settings folded away)
+// review: the experience is over — the whole room from above, the space dimmed, every visitor's trail of light
+let camBeforeReview = null;
+function onPhase(p) {
+  document.body.dataset.phase = p;
+  uniforms.uDim.value = p === 'review' ? 0.35 : 1;
+  const camBtn = (v) => $('cam').querySelector(`[data-v="${v}"]`);
+  if (p === 'review') { camBeforeReview = opts.camMode; camBtn('orbit').click(); }
+  else if (camBeforeReview) { camBtn(camBeforeReview).click(); camBeforeReview = null; }
+  if (p === 'explore') $('panel').classList.add('hidden');
+}
 
 new ResizeObserver(resize).observe(stage);
 resize();

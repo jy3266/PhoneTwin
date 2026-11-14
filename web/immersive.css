@@ -98,3 +98,6 @@ select { width: 100%; background: #0d141c; color: var(--text); border: 1px solid
   .exp-chip { top: 56px; max-width: calc(100vw - 24px); }
   .toast { top: 100px; }
 }
+
+/* during an experience only the space is shown: the trails section waits until it is over */
+body[data-phase="explore"] .trail-ui { display: none; }

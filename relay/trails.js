@@ -151,7 +151,7 @@ function keep(t) {
 function addPoint(t, x, y, z, at) {
   if (![x, y, z].every(Number.isFinite) || Math.abs(x) > 100 || Math.abs(y) > 100 || Math.abs(z) > 20) return;
   const p = t.pts[t.pts.length - 1];
-  if (p && Math.hypot(x - p[0], y - p[1]) < STEP_M && at - t.lastPt < STEP_S * 1000) return;
+  if (p && Math.hypot(x - p[0], y - p[1], z - p[2]) < STEP_M && at - t.lastPt < STEP_S * 1000) return;   // 3D: rising and sinking count too
   if (t.pts.length >= MAX_POINTS) return;
   t.pts.push([r2(x), r2(y), r2(z)]); t.lastPt = at;
 }

@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 
 const COLORS = { site: new THREE.Color(0x4fa9ff), web: new THREE.Color(0xb36dff) };
-const MAX_DRAW_POINTS = 160000, STEP_M = 0.05;
+const MAX_DRAW_POINTS = 120000, JUMP_M = 3;   // a jump longer than 3 m is tracking, not flight
 
 export function createTrails(o) {
   // o: { scene, $, toast, roomToScan, getMeta, getFloorY, getScan, isSite, apiBase }
@@ -34,6 +34,7 @@ export function createTrails(o) {
     msg.textContent = text || '';
     $('gateAgainName').textContent = st.id || '';
     $('gateAgain').hidden = !!st.done;   // one experience per id
+    $('gateLook').hidden = !st.done;      // trails are for those who finished
     $('gateSwitch').classList.toggle('primary', !!st.done);
     if (mode === 'login') setTimeout(() => ($('gateId').value ? $('gatePin') : $('gateId')).focus(), 50);
   }
@@ -72,7 +73,7 @@ export function createTrails(o) {
       const j = await call('start', { scan, kind, room: o.room || 'arko' });
       Object.assign(st, { sid: j.sid, kind, scan, t0: performance.now(), buf: [], last: null, lastSend: performance.now(), myLocal: [], kindWant: null, ended: null });
       hideGate(); updateChip();
-      o.toast(kind === 'site' ? '체험 시작 · 현장의 실제 움직임이 푸른 빛으로 남습니다' : '체험 시작 · 걷는 길이 보라 빛으로 남습니다');
+      o.toast('체험 시작 · 공간을 천천히 탐험해 보세요. 걸은 길은 체험이 끝나면 빛의 흔적으로 보입니다');
     } catch (err) {
       if (err.message === '401') return;
       if (err.status === 409) { markDone(); showGate('again', err.message); } else showGate('login', `시작하지 못했습니다: ${err.message}`);
@@ -82,6 +83,7 @@ export function createTrails(o) {
     st.done = true;
     try { localStorage.removeItem('ptTrailId'); } catch (e) { /* storage blocked */ }
     $('gateId').value = '';
+    updateChip();
   }
   async function endExperience(byUser) {
     if (!st.sid) return;
@@ -136,58 +138,63 @@ export function createTrails(o) {
       }
     }
     if (now - st.lastSend > (st.kind === 'web' ? 3000 : 10000)) flush();   // site: a keep-alive that also claims the walk
-    if (now - drawn > 1000 && st.kind === 'web') { drawn = now; draw(); }
   }
 
   // ------------------------------------------------------------ chip: who, what kind, how long, end
   function fmt(s) { s = Math.round(s); return s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`; }
   function updateChip() {
+    setPhase();
     const chip = $('expChip');
     chip.dataset.state = st.sid ? st.kind : 'idle';
     $('chipText').textContent = st.sid ? `${st.id} · ${st.kind === 'site' ? '현장 체험 중 (푸른 빛)' : '웹 체험 중 (보라 빛)'}` :
-      st.ended === 'offline' ? '기록 없이 보는 중' : st.token ? `${st.id} · ${st.done ? '체험 끝' : '체험 전'}` : '로그인 전';
+      st.ended === 'offline' ? '기록 없이 보는 중' : st.token ? `${st.id} · ${st.done ? '체험 끝 · 모든 흔적 보기' : '체험 전'}` : '로그인 전';
     $('endBtn').hidden = !st.sid; $('chipStart').hidden = !!st.sid || st.ended === 'offline';
   }
   setInterval(() => { if (st.sid) $('chipTime').textContent = fmt((performance.now() - st.t0) / 1000); else $('chipTime').textContent = ''; }, 500);
 
-  // ------------------------------------------------------------ drawing: small lights along every walk
+  // ------------------------------------------------------------ drawing: a line of light along the butterfly's flight (3D, not the floor)
   const group = new THREE.Group(); o.scene.add(group);
-  const uni = { uTime: { value: 0 }, uScale: { value: 500 } };
-  function material(color, alpha, size) {
+  const uni = { uTime: { value: 0 }, uScale: { value: 500 }, uRes: { value: new THREE.Vector2(1280, 800) } };
+  /** A camera-facing ribbon: every path point is two vertices pushed apart on screen; the fragment is a soft glow across it. */
+  function material(color, alpha, width) {
     return new THREE.ShaderMaterial({
-      uniforms: { ...uni, uColor: { value: color }, uAlpha: { value: alpha }, uSize: { value: size } },
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { ...uni, uColor: { value: color }, uAlpha: { value: alpha }, uWidth: { value: width } },
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
       vertexShader: /* glsl */`
-        attribute float aPhase; attribute float aFresh;
-        uniform float uTime, uScale, uSize, uAlpha;
-        varying float vA;
+        attribute vec3 aPrev; attribute vec3 aNext; attribute float aSide; attribute float aU; attribute float aFresh;
+        uniform float uTime, uScale, uWidth, uAlpha; uniform vec2 uRes;
+        varying float vEdge; varying float vA;
         void main() {
-          vec3 p = position; p.y += 0.02 * sin(uTime * 0.8 + aPhase * 6.2832);
-          vec4 mv = modelViewMatrix * vec4(p, 1.0);
-          gl_Position = projectionMatrix * mv;
-          float tw = 0.6 + 0.4 * sin(uTime * (1.0 + aPhase * 2.0) + aPhase * 40.0);
-          gl_PointSize = clamp(uSize * (1.0 + 0.6 * aFresh) * uScale / -mv.z, 1.0, 14.0);
-          vA = uAlpha * tw * (0.55 + 0.45 * aFresh);
+          mat4 m = projectionMatrix * modelViewMatrix;
+          vec4 c = m * vec4(position, 1.0), p = m * vec4(aPrev, 1.0), n = m * vec4(aNext, 1.0);
+          vec2 asp = vec2(uRes.x / uRes.y, 1.0);
+          vec2 dir = n.xy / max(n.w, 1e-3) * asp - p.xy / max(p.w, 1e-3) * asp;
+          dir = dot(dir, dir) < 1e-12 ? vec2(1.0, 0.0) : normalize(dir);
+          float px = clamp(uWidth * uScale / max(c.w, 0.05), 2.5, 28.0);         // full width in pixels, thinner far away
+          c.xy += vec2(-dir.y, dir.x) / asp * (px / uRes.y) * aSide * c.w;
+          gl_Position = c;
+          vEdge = aSide;
+          float flow = 0.7 + 0.3 * sin(aU * 7.0 - uTime * 1.8);                  // light running along the line
+          vA = uAlpha * flow * (0.65 + 0.35 * aFresh);
         }`,
       fragmentShader: /* glsl */`
         uniform vec3 uColor;
-        varying float vA;
+        varying float vEdge; varying float vA;
         void main() {
-          float r = length(gl_PointCoord - 0.5); if (r > 0.5) discard;
-          float s = smoothstep(0.5, 0.0, r);
-          gl_FragColor = vec4(uColor * (0.6 + 0.8 * s * s), vA * s);
+          float e = abs(vEdge), core = exp(-e * e * 30.0), halo = exp(-e * e * 3.5);
+          gl_FragColor = vec4(uColor * (0.45 * halo + 1.2 * core) + vec3(0.55 * core), vA * (0.3 * halo + core));
         }`,
     });
   }
+  const white = new THREE.Color(1, 1, 1);
   const layers = {
-    site: new THREE.Points(new THREE.BufferGeometry(), material(COLORS.site, 0.5, 0.022)),
-    web: new THREE.Points(new THREE.BufferGeometry(), material(COLORS.web, 0.5, 0.022)),
-    siteMine: new THREE.Points(new THREE.BufferGeometry(), material(COLORS.site.clone().lerp(new THREE.Color(1, 1, 1), 0.25), 1.0, 0.04)),
-    webMine: new THREE.Points(new THREE.BufferGeometry(), material(COLORS.web.clone().lerp(new THREE.Color(1, 1, 1), 0.25), 1.0, 0.04)),
+    site: new THREE.Mesh(new THREE.BufferGeometry(), material(COLORS.site, 0.45, 0.05)),
+    web: new THREE.Mesh(new THREE.BufferGeometry(), material(COLORS.web, 0.45, 0.05)),
+    siteMine: new THREE.Mesh(new THREE.BufferGeometry(), material(COLORS.site.clone().lerp(white, 0.3), 0.95, 0.09)),
+    webMine: new THREE.Mesh(new THREE.BufferGeometry(), material(COLORS.web.clone().lerp(white, 0.3), 0.95, 0.09)),
   };
   for (const l of Object.values(layers)) { l.frustumCulled = false; group.add(l); }
   const label = makeLabel(); group.add(label);
-  let drawn = 0;
 
   function makeLabel() {
     const c = document.createElement('canvas'); c.width = 512; c.height = 128;
@@ -205,47 +212,59 @@ export function createTrails(o) {
       g.shadowColor = `#${color.getHexString()}`; g.shadowBlur = 18; g.fillStyle = '#fff'; g.fillText(text, 256, 64);
       u.t.needsUpdate = true;
     }
-    label.position.copy(at).add(new THREE.Vector3(0, 0.35, 0)); label.visible = true;
+    label.position.copy(at).add(new THREE.Vector3(0, 0.3, 0)); label.visible = true;
   }
 
-  function toScan(q) {
-    const r = o.roomToScan(o.getMeta(), q[0], q[1], 0).p;
-    r.y = o.getFloorY() + 0.03;
-    return r;
-  }
-  function resample(path, out, phases, fresh, f) {
-    for (let i = 1; i < path.length; i++) {
-      const a = path[i - 1], b = path[i], L = a.distanceTo(b), n = Math.max(1, Math.ceil(L / STEP_M));
-      if (L > 3) continue;   // a tracking jump is not a walk
-      for (let k = 0; k < n; k++) {
-        const p = a.clone().lerp(b, k / n);
-        out.push(p.x, p.y, p.z); phases.push(Math.random()); fresh.push(f);
+  /** Room point (m) -> scene, at the height it was recorded: where the butterfly flew. */
+  function toScan(q) { return o.roomToScan(o.getMeta(), q[0], q[1], q[2] || 0).p; }
+  /** Break at tracking jumps, then round the corners (Chaikin, twice) so the line flows like the flight did. */
+  function strokes(path) {
+    const out = []; let cur = [];
+    for (const p of path) {
+      if (cur.length && cur[cur.length - 1].distanceTo(p) > JUMP_M) { if (cur.length > 1) out.push(cur); cur = []; }
+      cur.push(p);
+    }
+    if (cur.length > 1) out.push(cur);
+    return out.map((s) => {
+      for (let it = 0; it < 2 && s.length > 2; it++) {
+        const n = [s[0]];
+        for (let i = 0; i < s.length - 1; i++) n.push(s[i].clone().lerp(s[i + 1], 0.25), s[i].clone().lerp(s[i + 1], 0.75));
+        n.push(s[s.length - 1]); s = n;
       }
+      return s;
+    });
+  }
+  function addRibbon(b, s, fresh) {
+    const n = s.length, base = b.pos.length / 3;
+    let u = 0;
+    for (let i = 0; i < n; i++) {
+      if (i) u += s[i].distanceTo(s[i - 1]);
+      const p = s[i], a = s[Math.max(0, i - 1)], c = s[Math.min(n - 1, i + 1)];
+      for (const side of [-1, 1]) { b.pos.push(p.x, p.y, p.z); b.prev.push(a.x, a.y, a.z); b.next.push(c.x, c.y, c.z); b.side.push(side); b.u.push(u); b.fresh.push(fresh); }
+      if (i < n - 1) { const k = base + i * 2; b.idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
     }
   }
   function draw() {
-    const buckets = { site: [[], [], []], web: [[], [], []], siteMine: [[], [], []], webMine: [[], [], []] };
+    const empty = () => ({ pos: [], prev: [], next: [], side: [], u: [], fresh: [], idx: [] });
+    const buckets = { site: empty(), web: empty(), siteMine: empty(), webMine: empty() };
     let total = 0, lastMine = null, lastMineKind = 'web';
-    const list = st.trails.slice(-500);
     const counts = { site: 0, web: 0, mine: 0 };
-    for (const t of list) {
+    for (const t of st.trails.slice(-500)) {
       counts[t.kind]++; if (t.mine) counts.mine++;
       if (total > MAX_DRAW_POINTS) continue;
-      const path = t.pts.map(toScan), key = t.kind + (t.mine ? 'Mine' : '');
-      const b = buckets[key]; const before = b[0].length;
-      resample(path, b[0], b[1], b[2], t.live ? 1 : 0);
-      total += (b[0].length - before) / 3;
-      if (t.mine && path.length) { lastMine = path[path.length - 1]; lastMineKind = t.kind; }
+      const b = buckets[t.kind + (t.mine ? 'Mine' : '')];
+      for (const s of strokes(t.pts.map(toScan))) { addRibbon(b, s, t.live ? 1 : 0); total += s.length; }
+      if (t.mine && t.pts.length) { lastMine = toScan(t.pts[t.pts.length - 1]); lastMineKind = t.kind; }
     }
-    if (st.myLocal.length > 1) {   // my web walk right now, before the server has it
-      const b = buckets.webMine; resample(st.myLocal.map((p) => { const q = p.clone(); q.y = o.getFloorY() + 0.03; return q; }), b[0], b[1], b[2], 1);
-      lastMine = st.myLocal[st.myLocal.length - 1].clone().setY(o.getFloorY() + 0.03); lastMineKind = 'web';
-    }
-    for (const [k, [pos, ph, fr]] of Object.entries(buckets)) {
+    for (const [k, b] of Object.entries(buckets)) {
       const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      g.setAttribute('aPhase', new THREE.Float32BufferAttribute(ph, 1));
-      g.setAttribute('aFresh', new THREE.Float32BufferAttribute(fr, 1));
+      g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
+      g.setAttribute('aPrev', new THREE.Float32BufferAttribute(b.prev, 3));
+      g.setAttribute('aNext', new THREE.Float32BufferAttribute(b.next, 3));
+      g.setAttribute('aSide', new THREE.Float32BufferAttribute(b.side, 1));
+      g.setAttribute('aU', new THREE.Float32BufferAttribute(b.u, 1));
+      g.setAttribute('aFresh', new THREE.Float32BufferAttribute(b.fresh, 1));
+      g.setIndex(b.idx);
       layers[k].geometry.dispose(); layers[k].geometry = g;
     }
     if (lastMine && st.id) setLabel(`${st.id} (나)`, COLORS[lastMineKind], lastMine); else label.visible = false;
@@ -257,12 +276,23 @@ export function createTrails(o) {
     try {
       const q = new URLSearchParams({ scan: o.getScan() || '' }); if (st.token) q.set('token', st.token);
       const r = await fetch(`${st.api}/trails?${q}`, { cache: 'no-store' });
-      if (r.ok) { st.trails = (await r.json()).trails || []; draw(); }
+      if (r.ok) { st.trails = (await r.json()).trails || []; if (phase === 'review') draw(); }
     } catch (e) { /* offline: keep what we have */ }
     st.fetching = false;
   }
-  setInterval(refresh, 8000);
-  $('showTrails').addEventListener('change', (e) => { group.visible = e.target.checked; });
+  setInterval(() => { if (phase === 'review') refresh(); }, 8000);
+  $('showTrails').addEventListener('change', (e) => { st.show = e.target.checked; group.visible = phase === 'review' && st.show; });
+
+  // ------------------------------------------------------------ phases: explore (in an experience, no trails drawn) / review (finished: every trail)
+  let phase = null;
+  function setPhase() {
+    const p = st.sid ? 'explore' : st.done ? 'review' : 'idle';
+    if (p === phase) return;
+    phase = p;
+    group.visible = p === 'review' && st.show;
+    if (p === 'review') refresh();
+    if (o.onPhase) o.onPhase(p);
+  }
 
   // ------------------------------------------------------------ start: is the trail server there?
   async function boot() {
@@ -284,7 +314,7 @@ export function createTrails(o) {
   }
 
   return {
-    tick, boot, refresh, get state() { return st; }, layers, label,
-    frame(dt, scale) { uni.uTime.value += dt; uni.uScale.value = scale; },
+    tick, boot, refresh, get state() { return st; }, get phase() { return phase; }, layers, label,
+    frame(dt, scale, w, h) { uni.uTime.value += dt; uni.uScale.value = scale; if (w && h) uni.uRes.value.set(w, h); },
   };
 }
