@@ -119,4 +119,20 @@ public class TwinTest {
         TwinAudio.Voice none = TwinAudio.make("cup", null, null, .5f);
         assertNotNull(none.calm); assertEquals(.5f, none.volume, 0);
     }
+
+    /** Same numbers as Unreal's PhoneTwinTests (Grid, Collisions): shapes felt from 1.2 m, rising ever faster; own grid; vibration character. */
+    @org.junit.Test public void objectHapticsLikeUnreal() throws Exception {
+        assertEquals(0f, Collisions.objectIntensity(1.2f, 1.2f, .03f), 0);
+        assertEquals(1f, Collisions.objectIntensity(.02f, 1.2f, .03f), 1e-6);
+        assertTrue(Collisions.objectIntensity(1.199f, 1.2f, .03f) > .079f);
+        assertEquals(.08f + .92f*(float)Math.pow(.5, 1.6), Collisions.objectIntensity(.615f, 1.2f, .03f), 1e-4);
+        assertTrue(Collisions.objectIntensity(.2f, 1.2f, .03f) - Collisions.objectIntensity(.4f, 1.2f, .03f) > Collisions.objectIntensity(.8f, 1.2f, .03f) - Collisions.objectIntensity(1f, 1.2f, .03f));
+        assertEquals(1f, Collisions.hapticShape("", .7), 0);
+        assertTrue(Collisions.hapticShape("tick", .1) == 1f && Collisions.hapticShape("tick", .6) == 0f);
+        assertTrue(Collisions.hapticRate("pulse", 1) > Collisions.hapticRate("pulse", 0));
+        Collisions c = Collisions.parse("{\"voxel\":0.1,\"collisions\":[{\"id\":300,\"label\":\"cup\",\"voxel\":0.02,\"haptic\":\"tick\",\"hapticRange\":0.6,\"hapticGain\":0.8,\"cells\":[10,0,0]}]}");
+        Collisions.Shape s = c.shapes.get(0);
+        assertEquals(.21f, s.cells[0], 1e-5); assertEquals(.01f, s.cellR, 1e-6);
+        assertEquals("tick", s.haptic); assertEquals(.6f, s.hapticRange, 1e-6); assertEquals(.8f, s.hapticGain, 1e-6);
+    }
 }

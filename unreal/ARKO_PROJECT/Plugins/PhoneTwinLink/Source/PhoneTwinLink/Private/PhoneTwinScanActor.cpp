@@ -5,6 +5,27 @@
 #include "PhoneTwinSetup.h"
 #include "GameFramework/GameUserSettings.h"
 #include "Engine/Engine.h"
+#include "Kismet/KismetSystemLibrary.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/Application/IInputProcessor.h"
+
+/** Sees every key before any widget: ESC quits even while a text box of the start screen has the focus. */
+class FPhoneTwinEscProcessor : public IInputProcessor
+{
+public:
+	explicit FPhoneTwinEscProcessor(TWeakObjectPtr<APhoneTwinScanActor> InOwner) : Owner(InOwner) {}
+	virtual void Tick(const float, FSlateApplication&, TSharedRef<ICursor>) override {}
+	virtual bool HandleKeyDownEvent(FSlateApplication&, const FKeyEvent& E) override
+	{
+		if (E.GetKey() != EKeys::Escape || !Owner.IsValid()) return false;
+		TWeakObjectPtr<APhoneTwinScanActor> O = Owner;
+		AsyncTask(ENamedThreads::GameThread, [O]() { if (O.IsValid()) O->QuitNow(); });   // not from inside Slate's key routing
+		return true;
+	}
+	virtual const TCHAR* GetDebugName() const override { return TEXT("PhoneTwinEsc"); }
+private:
+	TWeakObjectPtr<APhoneTwinScanActor> Owner;
+};
 #include "Kismet/GameplayStatics.h"
 #include "LidarPointCloud.h"
 #include "LidarPointCloudComponent.h"
@@ -223,6 +244,11 @@ void APhoneTwinScanActor::BeginPlay()
 		}
 	UE_LOG(LogPhoneTwin, Log, TEXT("light look: %s"), UsingShaderLook() ? TEXT("GPU material (every frame)") : TEXT("CPU rebuild"));
 
+	if (FSlateApplication::IsInitialized())
+	{
+		EscProcessor = MakeShared<FPhoneTwinEscProcessor>(this);
+		FSlateApplication::Get().RegisterInputPreProcessor(EscProcessor);
+	}
 	if (bShowHud)
 		if (UGameViewportClient* VP = GetWorld()->GetGameViewport())
 		{
@@ -277,6 +303,15 @@ void APhoneTwinScanActor::StopRuntime()
 	if (UwbSocket) { UwbSocket->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(UwbSocket); UwbSocket = nullptr; }
 }
 
+void APhoneTwinScanActor::QuitNow()
+{
+	if (bQuitting) return;
+	bQuitting = true;
+	UE_LOG(LogPhoneTwin, Log, TEXT("ESC: quitting (vibration off first)"));
+	StopRuntime();   // every motor gets 0 before the sockets close
+	UKismetSystemLibrary::QuitGame(this, GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr, EQuitPreference::Quit, false);
+}
+
 void APhoneTwinScanActor::ShowSetup(bool bAtStart)
 {
 	UGameViewportClient* VP = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
@@ -291,7 +326,8 @@ void APhoneTwinScanActor::ShowSetup(bool bAtStart)
 	TWeakObjectPtr<APhoneTwinScanActor> Weak(this);
 	SetupWidget = MakePhoneTwinSetupWidget(V, Ids, !BuiltInRelayKey.IsEmpty(),
 		[Weak](const FPhoneTwinSetupValues& NV) { if (!Weak.IsValid()) return; NV.Save(); Weak->CloseSetup(); Weak->ApplySetup(NV); },
-		bAtStart ? TFunction<void()>() : TFunction<void()>([Weak]() { if (Weak.IsValid()) Weak->CloseSetup(); }));
+		bAtStart ? TFunction<void()>() : TFunction<void()>([Weak]() { if (Weak.IsValid()) Weak->CloseSetup(); }),
+		[Weak]() { if (Weak.IsValid()) Weak->QuitNow(); });
 	VP->AddViewportWidgetContent(SetupWidget.ToSharedRef(), 100);
 	if (Hud.IsValid()) Hud->SetVisibility(EVisibility::Collapsed);
 	if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
@@ -339,6 +375,8 @@ void APhoneTwinScanActor::ApplySetup(const FPhoneTwinSetupValues& V)
 
 void APhoneTwinScanActor::EndPlay(const EEndPlayReason::Type Reason)
 {
+	if (EscProcessor.IsValid() && FSlateApplication::IsInitialized()) FSlateApplication::Get().UnregisterInputPreProcessor(EscProcessor);
+	EscProcessor.Reset();
 	StopRuntime();
 	FPhoneTwinSync::Get().OnSynced.Remove(SyncHandle);
 	if (SetupWidget.IsValid()) if (UGameViewportClient* VP = GetWorld()->GetGameViewport()) VP->RemoveViewportWidgetContent(SetupWidget.ToSharedRef());
@@ -790,21 +828,35 @@ void APhoneTwinScanActor::Measure()
 	{
 		FVector P;
 		const double D = Grid.Nearest(Probe, ReactRange, bIgnoreFloor ? FloorZ + FloorMargin : -1e12, P);
-		if (D < Best)
+		if (D < ReactRange)
 		{
 			Best = D; Near = P; Obj = 0;
 			for (const FObjectUE& O : Objects) if (O.bAi && O.Cells.IsEmpty() && FVector::Dist(P, O.C) < O.R + 10.0) { Obj = O.Id; break; }   // surface of a recognised object
 		}
 	}
-	for (const FObjectUE& O : Objects)
+	float BestI = Obj == -1 ? 0.f : PhoneTwin::Intensity(Best, ReactRange, ContactDistance);
+	int32 Win = -1;
+	for (int32 i = 0; i < Objects.Num(); i++)
 	{
+		const FObjectUE& O = Objects[i];
 		if (O.bAi && O.Cells.IsEmpty()) continue;   // old scans: AI objects are approximate spheres, their surface comes from the scan
-		// a real shape lies on the scan surface: the shape wins a tie so the object gets the name and the sound
-		if (O.HandD < Best + (Obj == 0 ? 3.0 : 0.0)) { Best = FMath::Min(Best, O.HandD); Obj = O.Id; Near = O.HandNear; }
+		const float I = PhoneTwin::ObjectIntensity(O.HandD, O.HapticRangeCm > 0 ? O.HapticRangeCm : ObjectReactRange, ContactDistance);
+		// the strongest wins; a real shape lies on the scan surface, so it also wins a near tie with the surface (name, sound)
+		if (I > 0 && (I > BestI || (Obj == 0 && I > BestI - .05f))) { BestI = FMath::Max(BestI, I); Best = O.HandD; Obj = O.Id; Near = O.HandNear; Win = i; }
 	}
-	Intensity = PhoneTwin::Intensity(Best, ReactRange, ContactDistance);
-	bContact = Best <= FMath::Min<double>(ContactDistance, ReactRange * .9);
-	if (Best >= ReactRange) { Obj = -1; DistanceCm = -1; } else { DistanceCm = Best; NearestPoint = Near; bHasNearest = true; }
+	if (Win >= 0)
+	{
+		const FObjectUE& O = Objects[Win];
+		if (O.Haptic != PhoneTwin::EHaptic::Steady)
+		{
+			HapticPhase += GetWorld()->GetDeltaSeconds() * PhoneTwin::HapticRate(O.Haptic, BestI);
+			BestI *= PhoneTwin::HapticShape(O.Haptic, HapticPhase);
+		}
+		BestI = FMath::Clamp(BestI * O.HapticGain, 0.f, 1.f);
+	}
+	Intensity = BestI;
+	bContact = Obj != -1 && Best <= FMath::Min<double>(ContactDistance, ReactRange * .9);
+	if (Obj == -1) { DistanceCm = -1; } else { DistanceCm = Best; NearestPoint = Near; bHasNearest = true; }
 	ObjectId = Obj; ObjectName.Reset();
 	if (Obj == 0) ObjectName = TEXT("스캔 표면");
 	for (const FObjectUE& O : Objects) if (O.Id == Obj) ObjectName = O.Name;
@@ -1332,7 +1384,7 @@ FString APhoneTwinScanActor::HudText() const
 	}
 	if (!IsStarted()) S += TEXT("\n대기 중 — 휴대폰에서 '걷기 테스트 시작'을 누르면 진동·소리가 시작됩니다");
 	else if (!bTracking) S += TEXT("\n추적 대기 중 — 선택한 장치에서 신호가 오면 시작합니다");
-	else if (DistanceCm < 0) S += FString::Printf(TEXT("\n범위 밖 (%.0f cm 이내에 반응)"), ReactRange);
+	else if (DistanceCm < 0) S += FString::Printf(TEXT("\n범위 밖 (사물 %.0f cm · 표면 %.0f cm 이내에 반응)"), ObjectReactRange, ReactRange);
 	else S += FString::Printf(TEXT("\n%s %s  %.1f cm  · 세기 %d%%"), bContact ? TEXT("▶ 접촉") : TEXT("근접"), *ObjectName, DistanceCm, FMath::RoundToInt(Intensity * 100));
 	if (!SoundNow.IsEmpty()) S += TEXT("\n♪ ") + SoundNow;
 	S += FString::Printf(TEXT("\n스캔: %s"), *ScanStatus);
@@ -1460,6 +1512,7 @@ void APhoneTwinScanActor::RebuildObjects()
 		FObjectUE U;
 		U.Id = O.Id; U.Label = O.Label; U.Name = O.Name.IsEmpty() ? O.Label : O.Name; U.C = Frame.Point(O.C); U.R = O.R * 100.0; U.bAi = O.bAi;
 		U.CellR = O.Voxel * 50.0; U.Volume = O.Volume; U.bMuted = O.bMuted;
+		U.Haptic = PhoneTwin::HapticFromName(O.Haptic); U.HapticRangeCm = O.HapticRange > 0 ? O.HapticRange * 100.0 : -1.0; U.HapticGain = O.HapticGain;
 		U.FullCm = O.FullDistance < 0 ? -1.f : O.FullDistance * 100.f; U.MaxCm = O.MaxDistance < 0 ? -1.f : O.MaxDistance * 100.f;
 		U.Cells.Reserve(O.Cells.Num());
 		for (const FVector3f& C : O.Cells) U.Cells.Add(Frame.Point(C));

@@ -266,6 +266,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Reaction", meta = (ClampMin = "0"))
 	float ContactDistance = 3.f;
 
+	/** Shapes from the collision editor are felt from this far (cm) and grow ever stronger towards ContactDistance;
+	 *  each shape may set its own (editor: 진동 시작 거리). The scan surface keeps the short ReactRange. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Reaction", meta = (ClampMin = "5"))
+	float ObjectReactRange = 120.f;
+
 	/** Hand = tracked point + this many cm along its forward direction. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Reaction")
 	float ProbeOffset = 0.f;
@@ -396,6 +401,8 @@ public:
 	FPhoneTwinProximity OnProximity;
 
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SetSource(EPhoneTwinSource NewSource);
+	/** ESC: every motor to 0, then the program closes. */
+	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void QuitNow();
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void ToggleSource();
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SetFollowTracker(bool bFollow);
 	UFUNCTION(BlueprintCallable, Category = "Phone Twin") void SetView(EPhoneTwinView NewView);
@@ -441,6 +448,7 @@ private:
 		int32 Id = 0; FString Label, Name; FVector C = FVector::ZeroVector; double R = 0; bool bAi = false;
 		TArray<FVector> Cells; double CellR = 0;              // real shape; no cells = sphere C, R
 		float Volume = 1, FullCm = -1, MaxCm = -1; bool bMuted = false;
+		PhoneTwin::EHaptic Haptic = PhoneTwin::EHaptic::Steady; double HapticRangeCm = -1; float HapticGain = 1;   // vibration character (editor)
 		double FloorD = 1e12, HandD = 1e12; FVector HandNear = FVector::ZeroVector, FloorNear = FVector::ZeroVector;   // refreshed every frame
 	};
 	/** Sounds of one object (or of the scan surface): an approach layer and a touch layer. Pointers are kept alive by ObjectAudio / the sound maps. */
@@ -465,6 +473,9 @@ private:
 	struct FLink { double LastTime = -1e9; FString Address; uint32 Seq = 0; int64 Packets = 0; };
 
 	void OpenSocket();
+	bool bQuitting = false;
+	TSharedPtr<class IInputProcessor> EscProcessor;   // ESC quits, whatever has the keyboard focus
+	double HapticPhase = 0;
 	void ShowSetup(bool bAtStart);
 	void CloseSetup();
 	void ApplySetup(const FPhoneTwinSetupValues& V);

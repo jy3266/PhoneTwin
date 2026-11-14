@@ -116,9 +116,10 @@ function shapeBox(c, v) {
   return { centre: new THREE.Vector3((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2).multiplyScalar(v), top: hi[1] * v };
 }
 function addShapes(file) {
-  const v = file.voxel, m = new THREE.Matrix4();
+  const m = new THREE.Matrix4();
   for (const c of file.collisions) {
     if (!c.cells.length) continue;
+    const v = c.voxel > 0.001 ? c.voxel : file.voxel;   // a shape may have its own, finer grid
     const n = c.cells.length / 3, mesh = new THREE.InstancedMesh(cube, new THREE.MeshBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.28, depthWrite: false }), n);
     for (let i = 0; i < n; i++) { m.makeScale(v, v, v).setPosition((c.cells[i * 3] + 0.5) * v, (c.cells[i * 3 + 1] + 0.5) * v, (c.cells[i * 3 + 2] + 0.5) * v); mesh.setMatrixAt(i, m); }
     mesh.computeBoundingSphere(); marks.add(mesh);
@@ -261,8 +262,8 @@ let trailN = 0, distLabels = [], lastList = 0;
 function floorY() { return currentMeta && Array.isArray(currentMeta.a) ? currentMeta.a[1] : bounds.min.y; }
 function sceneObjects() {
   if (currentShapes) {
-    const v = currentShapes.voxel;
-    return currentShapes.collisions.filter((c) => c.cells.length).map((c) => ({ name: c.name, c: shapeBox(c, v).centre, cells: c.cells, voxel: v }));
+    const vf = currentShapes.voxel;
+    return currentShapes.collisions.filter((c) => c.cells.length).map((c) => { const v = c.voxel > 0.001 ? c.voxel : vf; return { name: c.name, c: shapeBox(c, v).centre, cells: c.cells, voxel: v }; });
   }
   const m = currentMeta || {};
   return [...(m.objects || []).map((o) => ({ name: o.name || `사물 ${o.id}`, c: v3(o.c), r: o.r || 0.25 })),

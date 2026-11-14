@@ -21,6 +21,9 @@ namespace PhoneTwin
 		FString NearSound, TouchSound;   // WAV in PhoneTwinScans/sounds or /Game/... asset; empty = built-in calm sound
 		float Volume = 1, FullDistance = -1, MaxDistance = -1;   // metres; negative = the actor's SoundFullDistance / SoundRange
 		bool bMuted = false;
+		FString Haptic;         // vibration character: steady | pulse | heartbeat | rumble | tick | wave (empty = steady)
+		float HapticRange = -1; // metres where the vibration starts; negative = the actor's ObjectReactRange
+		float HapticGain = 1;   // strength multiplier
 	};
 
 	struct FScanMeta
@@ -144,7 +147,54 @@ namespace PhoneTwin
 		double Spacing() const { return FVector2D(B.X - A.X, B.Y - A.Y).Size(); }
 	};
 
-	/** Same curve as the phone app: 0 at Range, 1 at Contact (and closer). */
+	/** How an object's vibration moves in time (collision editor "진동 느낌"). Same in the app (Collisions.java) and the editor. */
+	enum class EHaptic : uint8 { Steady, Pulse, Heartbeat, Rumble, Tick, Wave };
+	inline EHaptic HapticFromName(const FString& S)
+	{
+		if (S == TEXT("pulse")) return EHaptic::Pulse;
+		if (S == TEXT("heartbeat")) return EHaptic::Heartbeat;
+		if (S == TEXT("rumble")) return EHaptic::Rumble;
+		if (S == TEXT("tick")) return EHaptic::Tick;
+		if (S == TEXT("wave")) return EHaptic::Wave;
+		return EHaptic::Steady;
+	}
+	/** Objects: felt from Range on, rising ever faster to 1 at Contact (0.08 + 0.92 t^1.6). Any length unit, the same for all three. */
+	inline float ObjectIntensity(double Dist, double Range, double Contact)
+	{
+		const double C = FMath::Min(Contact, Range * 0.9);
+		if (Dist >= Range) return 0.f;
+		const double T = FMath::Clamp((Range - Dist) / (Range - C), 0.0, 1.0);
+		return (float)(0.08 + 0.92 * FMath::Pow(T, 1.6));
+	}
+	/** Cycles per second of a pattern at strength I (pulse and tick quicken as the hand comes closer). */
+	inline double HapticRate(EHaptic P, float I)
+	{
+		switch (P)
+		{
+		case EHaptic::Pulse: return 1.2 + 4.0 * I;
+		case EHaptic::Heartbeat: return 1.0 / (1.2 - 0.5 * I);
+		case EHaptic::Rumble: return 7.0;
+		case EHaptic::Tick: return 1.5 + 6.0 * I;
+		case EHaptic::Wave: return 0.6;
+		default: return 0.0;
+		}
+	}
+	/** The pattern's multiplier (0..1) at Phase (cycles; the caller adds Rate x seconds every frame). */
+	inline float HapticShape(EHaptic P, double Phase)
+	{
+		const double F = Phase - FMath::FloorToDouble(Phase), Tau = 6.283185307179586;
+		switch (P)
+		{
+		case EHaptic::Pulse: return F < 0.5 ? 1.f : 0.12f;
+		case EHaptic::Heartbeat: return F < 0.12 ? 1.f : (F > 0.22 && F < 0.34) ? 0.75f : 0.08f;
+		case EHaptic::Rumble: return (float)(0.7 + 0.3 * FMath::Sin(F * Tau));
+		case EHaptic::Tick: return F < 0.35 ? 1.f : 0.f;
+		case EHaptic::Wave: return (float)(0.3 + 0.7 * (0.5 + 0.5 * FMath::Sin(F * Tau)));
+		default: return 1.f;
+		}
+	}
+
+	/** Scan surfaces (walls, furniture without a shape): short range, straight line. 0 at Range, 1 at Contact. */
 	inline float Intensity(double Dist, double Range, double Contact)
 	{
 		const double C = FMath::Min(Contact, Range * 0.9);

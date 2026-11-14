@@ -61,9 +61,13 @@
           <button data-tool="move" title="4">옮기기</button>
           <button data-tool="rotate" title="5">회전</button>
           <button data-tool="scale" title="6">크기</button>
+          <button data-tool="split" title="7 · 부위 떼기: 드래그한 칸이 새 콜리전(부위)이 됩니다">부위</button>
         </div>
         <label class="slider">붓 크기 <input id="brush" type="range" min="0" max="6" step="1" value="1"><output id="brushOut">1</output></label>
-        <p class="hint">지우기: 칸을 드래그. 칠하기: 스캔 점 위를 드래그. 옮기기·회전·크기: 화살표나 고리를 드래그. 시점 돌리기: 오른쪽 버튼 드래그.</p>
+        <p class="hint">지우기: 칸을 드래그. 칠하기: 스캔 점 위를 드래그. 부위 떼기: 손잡이·뚜껑처럼 따로 느끼게 할 부분을 드래그하면 새 콜리전(부위)이 됩니다. 옮기기·회전·크기: 화살표나 고리를 드래그. 시점 돌리기: 오른쪽 버튼 드래그.</p>
+        <label class="field">세밀도 (칸 크기)<select id="detail"><option value="0.04">4 cm · 기본</option><option value="0.02">2 cm · 세밀</option><option value="0.01">1 cm · 아주 세밀 (붓으로 다듬기)</option></select></label>
+        <div class="buttons"><button id="fitScan" title="칸 중 스캔 점이 있는 곳(바로 옆 포함)만 남깁니다">스캔 표면에 맞추기</button></div>
+        <p class="hint">세밀도를 올리면 칸을 나눈 뒤 실제 스캔 표면에 있는 칸만 남깁니다. 손잡이, 컵, 전화기처럼 작은 것은 2 cm·1 cm로. 큰 사물 전체를 1 cm로 하면 칸이 너무 많아집니다 — 부위만 떼어 세밀하게 하세요.</p>
         <div class="buttons"><button id="regrow">이 자리에서 다시 찾기</button><button id="remove" class="danger">삭제</button></div>
         <label class="slider">찾는 범위 <input id="reach" type="range" min="0.1" max="2" step="0.05" value="0.6"><output id="reachOut">0.60 m</output></label>
       </section>
@@ -79,6 +83,15 @@
         <label class="slider">들리기 시작 거리 <input id="maxDistance" type="range" min="0.2" max="12" step="0.1"><output id="maxOut"></output></label>
         <label class="check"><input id="muted" type="checkbox"> 이 콜리전 소리 끄기</label>
         <p class="hint">파일을 비워 두면 사물에 맞는 내장 소리를 씁니다. 표면에서 잰 거리로 크기가 바뀝니다.</p>
+      </section>
+      <section>
+        <h2>진동 (손으로 느끼는 것)</h2>
+        <label class="field">진동 느낌<select id="haptic"></select></label>
+        <label class="slider">진동 시작 거리 <input id="hapticRange" type="range" min="0.1" max="3" step="0.05"><output id="hapticRangeOut"></output></label>
+        <label class="slider">진동 세기 <input id="hapticGain" type="range" min="0" max="1.5" step="0.05"><output id="hapticGainOut"></output></label>
+        <canvas id="hapticCanvas" width="600" height="190" aria-label="거리에 따른 진동 세기 그래프와 지금 진동"></canvas>
+        <label class="slider">미리보기 거리 <input id="hapticAt" type="range" min="0" max="3" step="0.01" value="0.4"><output id="hapticAtOut">0.40 m</output></label>
+        <p class="hint">그래프: 왼쪽이 멀리(진동 시작), 오른쪽이 손이 닿은 곳. 가까울수록 점점 더 강해집니다. 아래 막대는 미리보기 거리(관객을 세웠다면 그 관객의 손)에서 실제로 보내는 진동입니다. 사물마다 다른 느낌을 주면 관객이 진동만으로도 무엇인지 구분할 수 있습니다.</p>
       </section>
       <section>
         <h2>거리 시험</h2>

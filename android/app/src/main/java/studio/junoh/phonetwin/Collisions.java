@@ -14,9 +14,12 @@ final class Collisions {
     // SoundRange 400 cm, SoundFullDistance 50 cm, MaxSimultaneousSounds 6, behind = 30 %
     static final float TOUCH = .35f, RELEASE_EXTRA = .15f, REPEAT_S = 4f, FIRST_GAP_S = .8f;
     static final float SOUND_RANGE = 4f, SOUND_FULL = .5f, BEHIND = .3f; static final int MAX_SOUNDS = 6;
+    /** Unreal's ObjectReactRange: shapes are felt from 1.2 m unless the editor set their own start distance. */
+    static final float OBJECT_RANGE = 1.2f;
 
     static final class Shape {
         int id; String label = "", name = "", nearSound = "", touchSound = ""; boolean ai, muted;
+        String haptic = ""; float hapticRange = -1, hapticGain = 1;   // vibration character (collision editor)
         float volume = 1, full = -1, max = -1;           // full/max < 0: Unreal's SoundFullDistance / SoundRange
         float[] cells = new float[0]; float cellR;        // cell centres (x,y,z …), half a voxel
         float cx, cy, cz, r;                              // centre + rough radius (labels, sphere objects)
@@ -47,15 +50,17 @@ final class Collisions {
             s.ai = "ai".equals(e.optString("source", "")); s.nearSound = e.optString("nearSound", ""); s.touchSound = e.optString("touchSound", "");
             s.volume = (float)e.optDouble("volume", 1); s.full = (float)e.optDouble("fullDistance", -1); s.max = (float)e.optDouble("maxDistance", -1);
             s.muted = e.optBoolean("muted", false);
-            int k = flat.length()/3; s.cells = new float[k*3]; s.cellR = voxel*.5f;
+            s.haptic = e.optString("haptic", ""); s.hapticRange = (float)e.optDouble("hapticRange", -1); s.hapticGain = (float)e.optDouble("hapticGain", 1);
+            float v = (float)e.optDouble("voxel", voxel); if (v <= .001f) v = voxel;   // a shape may have its own, finer grid
+            int k = flat.length()/3; s.cells = new float[k*3]; s.cellR = v*.5f;
             float[] lo = {Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE}, hi = {-Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE};
             for (int i = 0; i < k; i++)
                 for (int a = 0; a < 3; a++) {
-                    float v = (float)((flat.getDouble(i*3 + a) + .5)*voxel); s.cells[i*3 + a] = v;
-                    lo[a] = Math.min(lo[a], v); hi[a] = Math.max(hi[a], v);
+                    float c = (float)((flat.getDouble(i*3 + a) + .5)*v); s.cells[i*3 + a] = c;
+                    lo[a] = Math.min(lo[a], c); hi[a] = Math.max(hi[a], c);
                 }
             s.cx = (lo[0] + hi[0])/2; s.cy = (lo[1] + hi[1])/2; s.cz = (lo[2] + hi[2])/2;
-            s.r = Math.max((hi[0] - lo[0])/2, (hi[2] - lo[2])/2) + voxel*.5f;
+            s.r = Math.max((hi[0] - lo[0])/2, (hi[2] - lo[2])/2) + v*.5f;
             int step = Math.max(1, (k + 1499)/1500); s.preview = new float[((k + step - 1)/step)*3];
             for (int i = 0, j = 0; i < k; i += step, j++) System.arraycopy(s.cells, i*3, s.preview, j*3, 3);
             out.add(s);
@@ -96,6 +101,36 @@ final class Collisions {
     static float intensity(float d, float range, float contact) {
         float c = Math.min(contact, range*.9f);
         return d >= range ? 0 : Math.max(0, Math.min(1, (range - d)/(range - c)));
+    }
+    /** PhoneTwin::ObjectIntensity: shapes are felt from range on, rising ever faster to 1 at contact (0.08 + 0.92 t^1.6). */
+    static float objectIntensity(float d, float range, float contact) {
+        float c = Math.min(contact, range*.9f);
+        if (d >= range) return 0;
+        float t = Math.max(0, Math.min(1, (range - d)/(range - c)));
+        return (float)(.08 + .92*Math.pow(t, 1.6));
+    }
+    /** PhoneTwin::HapticRate: cycles per second of a vibration character at strength i. */
+    static double hapticRate(String p, float i) {
+        switch (p) {
+            case "pulse": return 1.2 + 4.0*i;
+            case "heartbeat": return 1.0/(1.2 - .5*i);
+            case "rumble": return 7.0;
+            case "tick": return 1.5 + 6.0*i;
+            case "wave": return .6;
+            default: return 0;
+        }
+    }
+    /** PhoneTwin::HapticShape: the multiplier (0..1) at a phase in cycles. */
+    static float hapticShape(String p, double phase) {
+        double f = phase - Math.floor(phase), tau = Math.PI*2;
+        switch (p) {
+            case "pulse": return f < .5 ? 1f : .12f;
+            case "heartbeat": return f < .12 ? 1f : (f > .22 && f < .34) ? .75f : .08f;
+            case "rumble": return (float)(.7 + .3*Math.sin(f*tau));
+            case "tick": return f < .35 ? 1f : 0f;
+            case "wave": return (float)(.3 + .7*(.5 + .5*Math.sin(f*tau)));
+            default: return 1f;
+        }
     }
     /** distanceGain() of web/collision_core.js and Unreal's UpdateSounds (before squaring). */
     static float distanceGain(float d, float full, float max) {

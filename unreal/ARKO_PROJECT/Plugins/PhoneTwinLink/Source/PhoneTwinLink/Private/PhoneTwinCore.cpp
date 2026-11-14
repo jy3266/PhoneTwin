@@ -203,6 +203,8 @@ bool ParseCollisions(const FString& Json, TArray<FScanObject>& Out)
 		const TArray<TSharedPtr<FJsonValue>>* Flat;
 		if (!(*E)->TryGetArrayField(TEXT("cells"), Flat) || Flat->Num() < 3) continue;
 		FScanObject S; S.Voxel = Voxel;
+		double OwnVoxel = 0;
+		if ((*E)->TryGetNumberField(TEXT("voxel"), OwnVoxel) && OwnVoxel > 0.001) S.Voxel = OwnVoxel;   // a finer grid for this shape (2 cm, 1 cm)
 		double Id = 0, Num; (*E)->TryGetNumberField(TEXT("id"), Id); S.Id = (int32)Id;
 		(*E)->TryGetStringField(TEXT("label"), S.Label);
 		if (!(*E)->TryGetStringField(TEXT("name"), S.Name)) S.Name = S.Label;
@@ -212,15 +214,19 @@ bool ParseCollisions(const FString& Json, TArray<FScanObject>& Out)
 		if ((*E)->TryGetNumberField(TEXT("fullDistance"), Num)) S.FullDistance = Num;
 		if ((*E)->TryGetNumberField(TEXT("maxDistance"), Num)) S.MaxDistance = Num;
 		(*E)->TryGetBoolField(TEXT("muted"), S.bMuted);
+		(*E)->TryGetStringField(TEXT("haptic"), S.Haptic);
+		if ((*E)->TryGetNumberField(TEXT("hapticRange"), Num)) S.HapticRange = Num;
+		if ((*E)->TryGetNumberField(TEXT("hapticGain"), Num)) S.HapticGain = Num;
 		S.Cells.Reserve(Flat->Num() / 3);
 		FBox3f Box(ForceInit);
 		for (int32 i = 0; i + 2 < Flat->Num(); i += 3)
 		{
-			const FVector3f C(((*Flat)[i]->AsNumber() + .5) * Voxel, ((*Flat)[i + 1]->AsNumber() + .5) * Voxel, ((*Flat)[i + 2]->AsNumber() + .5) * Voxel);
+			const double Vx = S.Voxel;
+			const FVector3f C(((*Flat)[i]->AsNumber() + .5) * Vx, ((*Flat)[i + 1]->AsNumber() + .5) * Vx, ((*Flat)[i + 2]->AsNumber() + .5) * Vx);
 			S.Cells.Add(C); Box += C;
 		}
 		// centre + radius stay for what only needs a rough place: labels, OSC, TouchDesigner's map
-		S.C = Box.GetCenter(); S.R = FMath::Max(Box.GetExtent().X, Box.GetExtent().Z) + Voxel * .5f;
+		S.C = Box.GetCenter(); S.R = FMath::Max(Box.GetExtent().X, Box.GetExtent().Z) + S.Voxel * .5f;
 		Out.Add(MoveTemp(S));
 	}
 	return true;

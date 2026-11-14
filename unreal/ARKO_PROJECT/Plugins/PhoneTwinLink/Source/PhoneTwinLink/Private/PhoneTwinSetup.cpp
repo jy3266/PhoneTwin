@@ -89,7 +89,7 @@ public:
 	TArray<FString> Scans;
 	bool bHasKey = false;
 	TFunction<void(const FPhoneTwinSetupValues&)> OnStart;
-	TFunction<void()> OnClose;
+	TFunction<void()> OnClose, OnQuit;
 	TSharedPtr<SEditableTextBox> Room, Key, OscHost, OscPort, UwbPort, Esp;
 	FString Message;
 
@@ -144,7 +144,7 @@ public:
 					[
 						SNew(SVerticalBox)
 						+ SVerticalBox::Slot().AutoHeight()[ SNew(STextBlock).Text(FText::FromString(TEXT("PHONE TWIN  ·  시작 설정"))).Font(Title).ColorAndOpacity(Accent) ]
-						+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 14)[ Note(TEXT("현장에 맞게 확인하고 [시작]을 누르세요. 값은 기억되어 다음 실행 때 그대로 채워집니다. 실행 중에는 F6으로 다시 열 수 있습니다.")) ]
+						+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 14)[ Note(TEXT("현장에 맞게 확인하고 [시작]을 누르세요. 값은 기억되어 다음 실행 때 그대로 채워집니다. 실행 중에는 F6으로 다시 열 수 있고, ESC는 종료입니다.")) ]
 
 						+ SVerticalBox::Slot().AutoHeight().Padding(0, 4)[ Section(TEXT("관객 · 스캔")) ]
 						+ SVerticalBox::Slot().AutoHeight().Padding(0, 4)[ Row(Label(TEXT("관객을 움직이는 장치")),
@@ -191,6 +191,11 @@ public:
 	}
 
 	virtual bool SupportsKeyboardFocus() const override { return true; }
+	virtual FReply OnKeyDown(const FGeometry& G, const FKeyEvent& E) override
+	{
+		if (E.GetKey() == EKeys::Escape && OnQuit) { OnQuit(); return FReply::Handled(); }
+		return SCompoundWidget::OnKeyDown(G, E);
+	}
 
 	int32 ScanIndex() const { return V.Scan.IsEmpty() ? -1 : Scans.IndexOfByKey(V.Scan); }
 	void Step(int32 D)
@@ -220,11 +225,11 @@ public:
 };
 
 TSharedRef<SWidget> MakePhoneTwinSetupWidget(const FPhoneTwinSetupValues& Init, const TArray<FString>& ScanIds, bool bHasBuiltInKey,
-	TFunction<void(const FPhoneTwinSetupValues&)> OnStart, TFunction<void()> OnClose)
+	TFunction<void(const FPhoneTwinSetupValues&)> OnStart, TFunction<void()> OnClose, TFunction<void()> OnQuit)
 {
 	TSharedRef<SPhoneTwinSetup> W = SNew(SPhoneTwinSetup);
 	// the values must be in place before the rows read them: build again with them
-	W->V = Init; W->Scans = ScanIds; W->bHasKey = bHasBuiltInKey; W->OnStart = MoveTemp(OnStart); W->OnClose = MoveTemp(OnClose);
+	W->V = Init; W->Scans = ScanIds; W->bHasKey = bHasBuiltInKey; W->OnStart = MoveTemp(OnStart); W->OnClose = MoveTemp(OnClose); W->OnQuit = MoveTemp(OnQuit);
 	W->Construct(SPhoneTwinSetup::FArguments());
 	return W;
 }

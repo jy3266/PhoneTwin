@@ -152,6 +152,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
 
     // feedback settings (metres)
     private volatile float range = 0.30f, contactDist = 0.03f, probeOffset = 0f, objRadius = 0.25f;
+    private double hapticPhase; private long hapticLastNs;   // vibration character of the shape being felt
     private volatile boolean surfaceOn = true, skipFloor = true, useScale = false;
 
     // last twin state (written by GL thread)
@@ -1634,17 +1635,24 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
                     if (o.ai && o.isSphere() && Math.sqrt(sq(near[0]-o.cx) + sq(near[1]-o.cy) + sq(near[2]-o.cz)) < o.r + .1f/sc) { obj = o.id; break; }
             }
         }
+        // surfaces: short and straight (range); shapes: from their start distance, rising ever faster — the strongest wins (Unreal's Measure)
+        float intensity = obj == 0 ? Collisions.intensity(best, range, contactDist) : 0; Collisions.Shape win = null;
+        if (obj == 0 && best >= range) { obj = -1; best = Float.POSITIVE_INFINITY; }
         if (tw != null) {
             tw.measure(p, hand);
             for (Collisions.Shape o : tw.shapes) {
                 if (o.ai && o.isSphere()) continue;
-                float hd = o.handD*sc;   // a real shape lies on the scan surface: the shape wins a tie
-                if (hd < best + (obj == 0 ? .03f : 0)) { best = Math.min(best, hd); obj = o.id; System.arraycopy(o.handNear, 0, nearS, 0, 3); }
+                float hd = o.handD*sc, i = Collisions.objectIntensity(hd, o.hapticRange > 0 ? o.hapticRange : Collisions.OBJECT_RANGE, contactDist);
+                // a real shape lies on the scan surface: it also wins a near tie with the surface (name, sound)
+                if (i > 0 && (i > intensity || (obj == 0 && i > intensity - .05f))) { intensity = Math.max(intensity, i); best = hd; obj = o.id; win = o; System.arraycopy(o.handNear, 0, nearS, 0, 3); }
             }
         }
-        float intensity = Collisions.intensity(best, range, contactDist);
-        boolean contact = best <= Math.min(contactDist, range*.9f), pulse = false;
-        if (best >= range) obj = -1;
+        long tNs = System.nanoTime(); float dtS = hapticLastNs == 0 ? 0 : Math.min(.1f, (tNs - hapticLastNs)/1e9f); hapticLastNs = tNs;
+        if (win != null) {   // the shape's vibration character (collision editor), like Unreal
+            if (!win.haptic.isEmpty() && !"steady".equals(win.haptic)) { hapticPhase += dtS*Collisions.hapticRate(win.haptic, intensity); intensity *= Collisions.hapticShape(win.haptic, hapticPhase); }
+            intensity = Math.max(0, Math.min(1, intensity*win.hapticGain));
+        }
+        boolean contact = obj != -1 && best <= Math.min(contactDist, range*.9f), pulse = false;
         float dist = best;
 
         // 2. sounds + touch, like Unreal's UpdateSounds() / DriveSound()

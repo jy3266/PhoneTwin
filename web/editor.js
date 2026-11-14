@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
-import { SOUND_DEFAULTS, ballShape, boxShape, cellKey, distanceGain, flatten, growShape, occupancy, reachOf, shapeDistance, shiftCells, transformCells, unflatten } from './collision_core.js';
+import { SOUND_DEFAULTS, ballShape, boxShape, cellKey, distanceGain, flatten, growShape, occupancy, reachOf, shapeDistance, shiftCells, transformCells, unflatten,
+  MAX_CELLS, voxelOf, HAPTICS, HAPTIC_RANGE, objectIntensity, hapticRate, hapticShape, resampleCells, dilate } from './collision_core.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
@@ -29,6 +30,15 @@ const walker = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1.5, 20), n
 walker.visible = false; scene.add(walker);
 
 let cloud = null, data = null, occ = null, floor = 0, bounds = new THREE.Box3();
+const vox = (c) => voxelOf(data, c);   // every shape may have its own grid (세밀도)
+const occCache = new Map();             // scan occupancy per grid size
+function occAt(v) {
+  if (!occCache.has(v)) occCache.set(v, occupancy(cloud.geometry.getAttribute('position').array, v));
+  return occCache.get(v);
+}
+const cm = (v) => `${Math.round(v * 100)} cm`;
+/** Cells that lie on the scan surface at grid v. Below the phone's 1.5 cm point spacing a cell next to a point counts too (no holes). */
+const surfaceAt = (v) => (v <= 0.012 ? dilate(occAt(v), 1) : new Set(occAt(v).keys()));
 let selected = null, tool = 'orbit', dirty = false, placing = null;
 const undoStack = [];
 
@@ -44,7 +54,7 @@ const matrix = new THREE.Matrix4();
 /** Cells drawn as instanced cubes: solid when selected, faint otherwise. */
 function rebuildMesh(c) {
   if (c.mesh) { shapes.remove(c.mesh); c.mesh.dispose(); c.mesh.material.dispose(); }
-  const n = c.cells.length / 3, v = data.voxel, on = c === selected, color = COLORS[data.collisions.indexOf(c) % COLORS.length];
+  const n = c.cells.length / 3, v = vox(c), on = c === selected, color = COLORS[data.collisions.indexOf(c) % COLORS.length];
   const mat = new THREE.MeshLambertMaterial({ color, transparent: true, opacity: on ? 0.85 : 0.32, depthWrite: on });
   const mesh = new THREE.InstancedMesh(unit, mat, n);
   for (let i = 0; i < n; i++) {
@@ -78,7 +88,10 @@ function renderList() {
     li.innerHTML = '<div class="name"></div><div class="meta"></div>';
     li.querySelector('.name').textContent = c.name;
     const parts = [`${c.cells.length / 3}칸`];
+    if (Math.abs(vox(c) - data.voxel) > 1e-6) parts.push(`세밀 ${cm(vox(c))}`);
+    if (c.parent) parts.push('부위');
     if (c.nearSound || c.touchSound) parts.push('♪');
+    if (c.haptic && c.haptic !== 'steady') parts.push(`〰 ${HAPTICS.find((h) => h[0] === c.haptic)?.[1].split(' ')[0] || ''}`);
     if (c.fallback) parts.push('자동 구분 실패: 손봐 주세요');
     li.querySelector('.meta').textContent = parts.join(' · ');
     li.onclick = () => select(c); ul.appendChild(li);
@@ -97,7 +110,13 @@ function showSelected() {
   if (!c) return;
   $('name').value = c.name;
   const b = cellBox(c), s = b.getSize(new THREE.Vector3());
-  $('shapeInfo').textContent = `${c.label} · ${c.cells.length / 3}칸 · ${s.x.toFixed(2)} × ${s.z.toFixed(2)} × ${s.y.toFixed(2)}(높이) m`;
+  $('shapeInfo').textContent = `${c.label} · ${c.cells.length / 3}칸(${cm(vox(c))}) · ${s.x.toFixed(2)} × ${s.z.toFixed(2)} × ${s.y.toFixed(2)}(높이) m`;
+  $('detail').value = String(vox(c)); if (!$('detail').value) $('detail').value = '0.04';
+  $('brushOut').textContent = brushText();
+  $('haptic').value = c.haptic || 'steady';
+  $('hapticRange').value = c.hapticRange ?? HAPTIC_RANGE; $('hapticRangeOut').textContent = fmtM($('hapticRange').value);
+  $('hapticGain').value = c.hapticGain ?? 1; $('hapticGainOut').textContent = `${Math.round($('hapticGain').value * 100)}%`;
+  $('hapticAt').max = Math.max(0.2, +$('hapticRange').value + 0.3);
   fillSounds();
   const isAsset = (c.nearSound || '').startsWith('/Game');
   $('assetPath').value = isAsset ? c.nearSound : '';
@@ -107,7 +126,7 @@ function showSelected() {
   updateWalk();
 }
 function cellBox(c) {
-  const b = new THREE.Box3(), v = data.voxel;
+  const b = new THREE.Box3(), v = vox(c);
   for (let i = 0; i + 2 < c.cells.length; i += 3) b.expandByPoint(new THREE.Vector3(c.cells[i], c.cells[i + 1], c.cells[i + 2]).multiplyScalar(v)).expandByPoint(new THREE.Vector3(c.cells[i] + 1, c.cells[i + 1] + 1, c.cells[i + 2] + 1).multiplyScalar(v));
   return b;
 }
@@ -121,7 +140,7 @@ function placeGizmo() {
 function setTool(t) {
   tool = t;
   document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
-  controls.mouseButtons.LEFT = t === 'erase' || t === 'paint' ? null : THREE.MOUSE.ROTATE;
+  controls.mouseButtons.LEFT = t === 'erase' || t === 'paint' || t === 'split' ? null : THREE.MOUSE.ROTATE;
   placeGizmo();
 }
 document.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
@@ -136,7 +155,7 @@ gizmo.addEventListener('objectChange', () => {
 gizmo.addEventListener('dragging-changed', (e) => {
   controls.enabled = !e.value;
   if (e.value) { pushUndo(); gizmo.start = cellBox(selected).getCenter(new THREE.Vector3()); return; }
-  const c = selected, v = data.voxel, from = gizmo.start.toArray(), to = gizmoTarget.position.toArray();
+  const c = selected, v = vox(c), from = gizmo.start.toArray(), to = gizmoTarget.position.toArray();
   gizmo.start = null;
   if (tool === 'move') c.cells = shiftCells(c.cells, to.map((p, a) => Math.round((p - from[a]) / v)));
   else {
@@ -165,23 +184,27 @@ function floorPoint() {
   const t = (floor - ray.ray.origin.y) / ray.ray.direction.y;
   return t > 0 ? ray.ray.at(t, new THREE.Vector3()) : null;
 }
-function brushAt(fn, centre) {
-  const r = +$('brush').value, v = data.voxel;
+const brushText = () => `${$('brush').value}칸${selected ? ` (${cm((2 * +$('brush').value + 1) * vox(selected))} 폭)` : ''}`;
+function brushAt(fn, centre, v) {
+  const r = +$('brush').value;
   const ci = Math.floor(centre.x / v), cj = Math.floor(centre.y / v), ck = Math.floor(centre.z / v);
   for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) for (let k = -r; k <= r; k++) if (i * i + j * j + k * k <= r * r) fn(ci + i, cj + j, ck + k);
 }
-function strokeErase() {
+let splitCells = [];   // cells taken off the selected shape while dragging with 부위 떼기
+function strokeErase(keepTaken) {
   const c = selected, h = ray.intersectObject(c.mesh)[0]; if (!h) return false;
-  const gone = new Set();
-  brushAt((i, j, k) => gone.add(cellKey(i, j, k)), h.point.clone().addScaledVector(h.face.normal, -data.voxel / 2));
-  const out = unflatten(c.cells).filter((x) => !gone.has(cellKey(...x)));
+  const gone = new Set(), v = vox(c);
+  brushAt((i, j, k) => gone.add(cellKey(i, j, k)), h.point.clone().addScaledVector(h.face.normal, -v / 2), v);
+  const out = [];
+  for (const x of unflatten(c.cells)) { if (gone.has(cellKey(...x))) { if (keepTaken) splitCells.push(x); } else out.push(x); }
   if (out.length * 3 === c.cells.length) return false;
+  if (!out.length) { if (keepTaken) splitCells.length = 0; toast('사물 전체는 뗄 수 없습니다'); return false; }
   c.cells = flatten(out); return true;
 }
 function strokePaint() {
   const c = selected, p = pickPoint(); if (!p) return false;
-  const have = new Set(unflatten(c.cells).map((x) => cellKey(...x))), add = [];
-  brushAt((i, j, k) => { const key = cellKey(i, j, k); if (!have.has(key) && (occ.has(key) || $('brush').value === '0')) add.push(i, j, k); }, p);
+  const have = new Set(unflatten(c.cells).map((x) => cellKey(...x))), add = [], v = vox(c), o = occAt(v);
+  brushAt((i, j, k) => { const key = cellKey(i, j, k); if (!have.has(key) && (o.has(key) || $('brush').value === '0')) add.push(i, j, k); }, p, v);
   if (!add.length) return false;
   c.cells = c.cells.concat(add); return true;
 }
@@ -192,19 +215,27 @@ canvas.addEventListener('pointerdown', (e) => {
   setRay(e);
   if (placing) { finishPlacing(); return; }
   if ($('walk').checked) { moveWalker(); return; }
-  if ((tool === 'erase' || tool === 'paint') && selected) { pushUndo(); painting = true; stroke(); return; }
+  if ((tool === 'erase' || tool === 'paint' || tool === 'split') && selected) { pushUndo(); painting = true; splitCells = []; stroke(); return; }
   if (tool === 'orbit') {
     const hit = ray.intersectObjects(shapes.children.filter((m) => m.visible))[0];
     canvas.downAt = [e.clientX, e.clientY, hit?.object.userData.collision];
   }
 });
 function stroke() {
-  const changed = tool === 'erase' ? strokeErase() : strokePaint();
+  const changed = tool === 'paint' ? strokePaint() : strokeErase(tool === 'split');
   if (changed) { selected.fallback = false; rebuildMesh(selected); }
 }
 canvas.addEventListener('pointermove', (e) => { if (painting) { setRay(e); stroke(); } });
 addEventListener('pointerup', (e) => {
-  if (painting) { painting = false; renderList(); showSelected(); }
+  if (painting) {
+    painting = false;
+    if (tool === 'split' && splitCells.length) {   // the taken cells become a part with its own name, sound and vibration
+      const parent = selected, { mesh, id, ...rest } = parent;
+      const part = { ...rest, id: nextId(), name: `${parent.name} · 부위`, label: parent.label, source: 'user', parent: parent.id, cells: flatten(splitCells), fallback: false };
+      splitCells = []; data.collisions.push(part); rebuildMesh(parent); select(part); toast('부위를 떼어 냈습니다. 이름·소리·진동을 따로 정해 주세요');
+    }
+    renderList(); showSelected();
+  }
   if (canvas.downAt && Math.hypot(e.clientX - canvas.downAt[0], e.clientY - canvas.downAt[1]) < 5 && canvas.downAt[2]) select(canvas.downAt[2]);
   canvas.downAt = null;
 });
@@ -212,7 +243,7 @@ addEventListener('pointerup', (e) => {
 // ---------------------------------------------------------------- add / regrow / delete
 const nextId = () => Math.max(199, ...data.collisions.map((c) => c.id)) + 1;
 function newCollision(cells, label) {
-  const c = { id: nextId(), label, name: label, source: 'user', fallback: false, cells: flatten(cells), ...SOUND_DEFAULTS };
+  const c = { id: nextId(), label, name: label, source: 'user', fallback: false, cells: flatten(cells), ...SOUND_DEFAULTS };   // the file's grid; 세밀도 refines it
   data.collisions.push(c); select(c); return c;
 }
 function startPlacing(kind) { placing = kind; const m = $('mode'); m.textContent = '스캔에서 사물을 클릭하세요'; m.hidden = false; }
@@ -236,13 +267,65 @@ $('remove').onclick = () => {
   renderList(); showSelected(); placeGizmo();
 };
 $('regrow').onclick = () => {
-  const c = selected, centre = cellBox(c).getCenter(new THREE.Vector3());
-  const cells = growShape(occ, [centre.x, centre.y, centre.z], +$('reach').value, data.voxel);
+  const c = selected, centre = cellBox(c).getCenter(new THREE.Vector3()), v = vox(c);
+  const cells = growShape(occAt(v), [centre.x, centre.y, centre.z], +$('reach').value, v);
   if (cells.length < 6) { toast('이 자리에서 사물을 찾지 못했습니다'); return; }
   pushUndo(); c.cells = flatten(cells); c.fallback = false; rebuildMesh(c); renderList(); showSelected();
 };
 $('reach').oninput = () => { $('reachOut').textContent = fmtM($('reach').value); };
-$('brush').oninput = () => { $('brushOut').textContent = $('brush').value; };
+$('brush').oninput = () => { $('brushOut').textContent = brushText(); };
+
+// ---------------------------------------------------------------- 세밀도: a finer grid for this shape, fitted to the scan surface
+function setCells(c, cells, v) {
+  if (cells.length / 3 > MAX_CELLS) { toast(`칸이 너무 많습니다 (${(cells.length / 3).toLocaleString('ko-KR')}칸). 부위를 떼어 그 부분만 세밀하게 해 주세요`); return false; }
+  pushUndo(); c.cells = cells; c.fallback = false;
+  if (Math.abs(v - data.voxel) < 1e-6) delete c.voxel; else c.voxel = v;
+  rebuildMesh(c); renderList(); showSelected(); placeGizmo(); return true;
+}
+$('detail').onchange = () => {
+  const c = selected, from = vox(c), to = +$('detail').value;
+  let cells = resampleCells(c.cells, from, to, to < from ? surfaceAt(to) : null);
+  if (to < from && cells.length < 9) { cells = resampleCells(c.cells, from, to, null); toast('이 자리에 스캔 점이 거의 없어 칸만 나눴습니다'); }
+  if (!setCells(c, cells, to)) $('detail').value = String(from);
+  else toast(to < from ? `${cm(to)} 칸으로 나누고 스캔 표면에 맞췄습니다` : `${cm(to)} 칸으로 합쳤습니다`);
+};
+$('fitScan').onclick = () => {
+  const c = selected, v = vox(c), keep = surfaceAt(v);
+  const out = unflatten(c.cells).filter((x) => keep.has(cellKey(...x)));
+  if (out.length < 3) { toast('스캔 표면과 겹치는 칸이 없습니다'); return; }
+  if (out.length * 3 === c.cells.length) { toast('이미 스캔 표면에 맞춰져 있습니다'); return; }
+  const removed = c.cells.length / 3 - out.length;
+  if (setCells(c, flatten(out), v)) toast(`스캔 표면 밖의 칸 ${removed}개를 지웠습니다`);
+};
+
+// ---------------------------------------------------------------- 진동: character, start distance, strength (+ a live preview)
+for (const [v, t] of HAPTICS) $('haptic').add(new Option(t, v));
+$('haptic').onchange = () => { if ($('haptic').value === 'steady') delete selected.haptic; else selected.haptic = $('haptic').value; markDirty(); renderList(); };
+$('hapticRange').oninput = () => { selected.hapticRange = +$('hapticRange').value; $('hapticRangeOut').textContent = fmtM(selected.hapticRange); $('hapticAt').max = selected.hapticRange + 0.3; markDirty(); };
+$('hapticGain').oninput = () => { selected.hapticGain = +$('hapticGain').value; $('hapticGainOut').textContent = `${Math.round(selected.hapticGain * 100)}%`; markDirty(); };
+$('hapticAt').oninput = () => { $('hapticAtOut').textContent = fmtM($('hapticAt').value); };
+let hapticPhase = 0, hapticLast = performance.now(), walkHand = null;
+function drawHaptic(now) {
+  requestAnimationFrame(drawHaptic);
+  const dt = Math.min(0.1, (now - hapticLast) / 1000); hapticLast = now;
+  const cv = $('hapticCanvas'); if (!cv || !selected || $('sel').hidden) return;
+  const g = cv.getContext('2d'), W = cv.width, H = cv.height, c = selected, range = c.hapticRange ?? HAPTIC_RANGE, gain = c.hapticGain ?? 1, kind = c.haptic || 'steady';
+  const d = walker.visible && walkHand != null ? walkHand : +$('hapticAt').value;
+  let i = Math.min(1, objectIntensity(d, range) * gain);
+  hapticPhase += dt * hapticRate(kind, i); const live = i * hapticShape(kind, hapticPhase);
+  g.clearRect(0, 0, W, H); g.fillStyle = '#0b1016'; g.fillRect(0, 0, W, H);
+  const top = 12, bot = 120, x0 = 10, x1 = W - 10, xs = (dd) => x0 + (1 - dd / Math.max(range, 0.01)) * (x1 - x0);
+  g.strokeStyle = '#334155'; g.beginPath(); g.moveTo(x0, bot); g.lineTo(x1, bot); g.stroke();
+  g.strokeStyle = '#facc15'; g.lineWidth = 2; g.beginPath();
+  for (let k = 0; k <= 100; k++) { const dd = range * (1 - k / 100), y = bot - Math.min(1, objectIntensity(dd, range) * gain) * (bot - top); k ? g.lineTo(xs(dd), y) : g.moveTo(xs(dd), y); }
+  g.stroke(); g.lineWidth = 1;
+  if (d < range) { g.fillStyle = '#fb923c'; g.beginPath(); g.arc(xs(d), bot - i * (bot - top), 5, 0, Math.PI * 2); g.fill(); }
+  g.fillStyle = '#94a3b8'; g.font = '12px system-ui, sans-serif'; g.fillText(`${fmtM(range)} 시작`, x0, bot + 16); g.textAlign = 'right'; g.fillText('닿음', x1, bot + 16); g.textAlign = 'left';
+  g.fillStyle = '#1e293b'; g.fillRect(x0, 150, x1 - x0, 26);
+  g.fillStyle = live > 0.02 ? '#f97316' : '#334155'; g.fillRect(x0, 150, (x1 - x0) * live, 26);
+  g.fillStyle = '#e2e8f0'; g.fillText(`${walker.visible && walkHand != null ? '관객 손' : '미리보기'} ${(d * 100).toFixed(0)} cm · 진동 ${Math.round(live * 255)}/255`, x0 + 6, 168);
+}
+requestAnimationFrame(drawHaptic);
 
 $('name').oninput = () => { selected.name = $('name').value; markDirty(); renderList(); };
 function bindNum(id, out, f) {
@@ -335,17 +418,19 @@ function updateWalk() {
   if (!walker.visible || !data) return;
   const p = walker.position, rows = [];
   for (const c of data.collisions) {
-    const d = shapeDistance(c.cells, data.voxel, p.x, 0, p.z, true), g = distanceGain(c, d);
+    const d = shapeDistance(c.cells, vox(c), p.x, 0, p.z, true), g = distanceGain(c, d);
+    const hand = shapeDistance(c.cells, vox(c), p.x, floor + 1.0, p.z), vib = Math.min(1, objectIntensity(hand, c.hapticRange ?? HAPTIC_RANGE) * (c.hapticGain ?? 1));
+    if (c === selected) walkHand = hand;
     const v = voices.get(c.id); if (v) v.gain.gain.setTargetAtTime(Math.min(1.5, g), audio.currentTime, 0.05);
-    rows.push({ c, d, g });
+    rows.push({ c, d, g, vib });
   }
   rows.sort((a, b) => a.d - b.d);
-  $('walkInfo').textContent = rows.slice(0, 5).map((r) => `${r.c.name}: ${(r.d * 100).toFixed(0)} cm · ${Math.round(r.g * 100)}%`).join('\n');
+  $('walkInfo').textContent = rows.slice(0, 5).map((r) => `${r.c.name}: ${(r.d * 100).toFixed(0)} cm · 소리 ${Math.round(r.g * 100)}% · 진동 ${Math.round(r.vib * 100)}%`).join('\n');
 }
 $('walk').onchange = async () => {
   await audio.resume();
   if ($('walk').checked) data.collisions.forEach(restartVoice);
-  else { [...voices.keys()].forEach(stopVoice); walker.visible = false; }
+  else { [...voices.keys()].forEach(stopVoice); walker.visible = false; walkHand = null; }
 };
 
 // ---------------------------------------------------------------- views + load / save
@@ -377,7 +462,7 @@ async function openScan(id) {
   shapes.clear(); selected = null; undoStack.length = 0; dirty = false; $('dirty').textContent = '';
   data = col;
   for (const c of data.collisions) for (const k of Object.keys(SOUND_DEFAULTS)) if (c[k] === undefined) c[k] = SOUND_DEFAULTS[k];
-  occ = occupancy(geom.getAttribute('position').array, data.voxel);
+  occCache.clear(); occ = occAt(data.voxel);
   floor = Array.isArray(meta?.a) ? meta.a[1] : estimateFloor(geom);
   refreshAll(); showSelected(); setView('iso'); $('empty').hidden = true;
   history.replaceState(null, '', `#${encodeURIComponent(id)}`);
@@ -416,7 +501,7 @@ addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); return; }
   if (e.target.matches('input[type=text]') || e.ctrlKey) return;
-  const t = { 1: 'orbit', 2: 'erase', 3: 'paint', 4: 'move', 5: 'rotate', 6: 'scale' }[e.key];
+  const t = { 1: 'orbit', 2: 'erase', 3: 'paint', 4: 'move', 5: 'rotate', 6: 'scale', 7: 'split' }[e.key];
   if (t) setTool(t);
   if (e.key === 'Escape' && placing) { placing = null; $('mode').hidden = true; }
 });

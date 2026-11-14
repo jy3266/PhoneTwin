@@ -267,9 +267,10 @@ let shapes = [], touchAcc = 0, waveNext = 0;
 function setShapes(file) {
   shapes = [];
   if (!file || !Array.isArray(file.collisions)) { info.shapes = 0; return; }
-  const v = file.voxel || 0.04;
+  const vf = file.voxel || 0.04;
   for (const c of file.collisions) {
     if (!c.cells || c.cells.length < 3 || c.muted) continue;
+    const v = c.voxel > 0.001 ? c.voxel : vf;   // a shape may have its own, finer grid
     const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < c.cells.length; i++) { const a = i % 3; lo[a] = Math.min(lo[a], c.cells[i] * v); hi[a] = Math.max(hi[a], (c.cells[i] + 1) * v); }
     shapes.push({ name: c.name || c.label, cells: c.cells, v, lo, hi, touching: false, lastWave: -1e9 });

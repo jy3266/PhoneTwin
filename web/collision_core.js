@@ -4,6 +4,37 @@
 
 export const VOXEL = 0.04;
 export const SOUND_DEFAULTS = { nearSound: '', touchSound: '', volume: 1, fullDistance: 0.5, maxDistance: 4, muted: false };
+/** Detail levels of a shape's own grid ("voxel" on the collision; the file's voxel when absent). */
+export const DETAILS = [0.04, 0.02, 0.01];
+export const MAX_CELLS = 120000;   // one shape; Unreal and the phone measure every cell every frame
+/** The grid of one shape. */
+export const voxelOf = (file, c) => (c && c.voxel > 0.001 ? c.voxel : file.voxel || VOXEL);
+
+// ---------------------------------------------------------------- vibration (the same rule as PhoneTwinCore.h and Collisions.java)
+export const HAPTICS = [['steady', '일정'], ['pulse', '맥박 (가까울수록 빨라짐)'], ['heartbeat', '두근두근'], ['rumble', '웅웅 (냉장고·TV처럼 떨림)'], ['tick', '톡톡 (가까울수록 빨라짐)'], ['wave', '물결 (천천히 밀려옴)']];
+export const HAPTIC_RANGE = 1.2;   // m, Unreal's ObjectReactRange
+export const CONTACT = 0.03;
+/** Felt from range on, rising ever faster to 1 at contact. */
+export function objectIntensity(d, range = HAPTIC_RANGE, contact = CONTACT) {
+  const c = Math.min(contact, range * 0.9);
+  if (d >= range) return 0;
+  const t = clamp((range - d) / (range - c), 0, 1);
+  return 0.08 + 0.92 * Math.pow(t, 1.6);
+}
+export function hapticRate(p, i) {
+  return { pulse: 1.2 + 4 * i, heartbeat: 1 / (1.2 - 0.5 * i), rumble: 7, tick: 1.5 + 6 * i, wave: 0.6 }[p] || 0;
+}
+export function hapticShape(p, phase) {
+  const f = phase - Math.floor(phase), tau = Math.PI * 2;
+  switch (p) {
+    case 'pulse': return f < 0.5 ? 1 : 0.12;
+    case 'heartbeat': return f < 0.12 ? 1 : f > 0.22 && f < 0.34 ? 0.75 : 0.08;
+    case 'rumble': return 0.7 + 0.3 * Math.sin(f * tau);
+    case 'tick': return f < 0.35 ? 1 : 0;
+    case 'wave': return 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(f * tau));
+    default: return 1;
+  }
+}
 
 // how far (metres) a shape of this kind may reach from its centre; the phone's radius is often far too small for large things
 const REACH = { bed: 1.4, couch: 1.3, sofa: 1.3, 'dining table': 1.2, table: 1.2, desk: 1.1, chair: 0.65, bench: 1, person: 0.6, refrigerator: 0.7,
@@ -205,6 +236,36 @@ export function shapeDistance(cells, voxel, x, y, z, floorOnly = false) {
     if (d < best) best = d;
   }
   return Math.max(0, Math.sqrt(best) - voxel / 2);
+}
+
+/** A shape on another grid: finer = every cell split (and, with `keep`, only the parts on the scan surface), coarser = merged. */
+export function resampleCells(flat, from, to, keep) {
+  const out = new Map();
+  if (Math.abs(from - to) < 1e-6) return flat.slice();
+  if (to < from) {
+    const n = Math.max(1, Math.round(from / to));
+    for (let p = 0; p + 2 < flat.length; p += 3)
+      for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) for (let c = 0; c < n; c++) {
+        const cell = [flat[p] * n + a, flat[p + 1] * n + b, flat[p + 2] * n + c], key = cellKey(...cell);
+        if (!keep || keep.has(key)) out.set(key, cell);
+      }
+  } else {
+    const n = Math.max(1, Math.round(to / from));
+    for (let p = 0; p + 2 < flat.length; p += 3) {
+      const cell = [Math.floor(flat[p] / n), Math.floor(flat[p + 1] / n), Math.floor(flat[p + 2] / n)];
+      out.set(cellKey(...cell), cell);
+    }
+  }
+  return flatten([...out.values()]);
+}
+/** Occupied cells grown by `r` cells in every direction: a finer shape keeps what lies on (or right next to) the scan surface. */
+export function dilate(occ, r = 1) {
+  const out = new Set();
+  for (const key of occ.keys()) {
+    const [i, j, k] = keyCell(key);
+    for (let a = -r; a <= r; a++) for (let b = -r; b <= r; b++) for (let c = -r; c <= r; c++) out.add(cellKey(i + a, j + b, k + c));
+  }
+  return out;
 }
 
 /** Loudness at a distance. The same formula as APhoneTwinScanActor::UpdateSounds in Unreal. */

@@ -75,6 +75,16 @@ bool FPhoneTwinGridTest::RunTest(const FString&)
 	TestEqual(TEXT("intensity far"), Intensity(30, 30, 3), 0.f);
 	TestEqual(TEXT("intensity contact"), Intensity(2, 30, 3), 1.f);
 	TestTrue(TEXT("intensity mid"), FMath::Abs(Intensity(16.5, 30, 3) - .5f) < 1e-3);
+	// shapes: felt from far, rising ever faster (same numbers in Collisions.java and collision_core.js)
+	TestEqual(TEXT("object out of range"), ObjectIntensity(120, 120, 3), 0.f);
+	TestEqual(TEXT("object contact"), ObjectIntensity(2, 120, 3), 1.f);
+	TestTrue(TEXT("object felt at the edge"), ObjectIntensity(119.9, 120, 3) > .079f);
+	TestTrue(TEXT("object mid (t=.5)"), FMath::Abs(ObjectIntensity(61.5, 120, 3) - (.08f + .92f * FMath::Pow(.5f, 1.6f))) < 1e-4);
+	TestTrue(TEXT("rises faster when close"), ObjectIntensity(20, 120, 3) - ObjectIntensity(40, 120, 3) > ObjectIntensity(80, 120, 3) - ObjectIntensity(100, 120, 3));
+	TestEqual(TEXT("steady"), HapticShape(EHaptic::Steady, .7), 1.f);
+	TestTrue(TEXT("tick has gaps"), HapticShape(EHaptic::Tick, .1) == 1.f && HapticShape(EHaptic::Tick, .6) == 0.f);
+	TestTrue(TEXT("pulse quickens"), HapticRate(EHaptic::Pulse, 1) > HapticRate(EHaptic::Pulse, 0));
+	TestTrue(TEXT("names"), HapticFromName(TEXT("heartbeat")) == EHaptic::Heartbeat && HapticFromName(TEXT("?")) == EHaptic::Steady);
 	return true;
 }
 
@@ -255,9 +265,14 @@ bool FPhoneTwinCollisionTest::RunTest(const FString&)
 {
 	using namespace PhoneTwin;
 	TArray<FScanObject> O;
-	TestTrue(TEXT("parse"), ParseCollisions(TEXT("{\"voxel\":0.1,\"collisions\":[{\"id\":100,\"label\":\"chair\",\"name\":\"의자\",\"source\":\"ai\",\"cells\":[0,0,0,2,0,0],\"nearSound\":\"rain.wav\",\"touchSound\":\"/Game/Bell\",\"volume\":0.5,\"fullDistance\":0.3,\"maxDistance\":2,\"muted\":true},{\"id\":200,\"label\":\"x\",\"cells\":[]}]}"), O));
-	TestEqual(TEXT("empty shape dropped"), O.Num(), 1);
-	if (O.Num() == 1)
+	TestTrue(TEXT("parse"), ParseCollisions(TEXT("{\"voxel\":0.1,\"collisions\":[{\"id\":100,\"label\":\"chair\",\"name\":\"의자\",\"source\":\"ai\",\"cells\":[0,0,0,2,0,0],\"nearSound\":\"rain.wav\",\"touchSound\":\"/Game/Bell\",\"volume\":0.5,\"fullDistance\":0.3,\"maxDistance\":2,\"muted\":true},{\"id\":200,\"label\":\"x\",\"cells\":[]},{\"id\":300,\"label\":\"cup\",\"voxel\":0.02,\"haptic\":\"tick\",\"hapticRange\":0.6,\"hapticGain\":0.8,\"cells\":[10,0,0]}]}"), O));
+	TestEqual(TEXT("empty shape dropped"), O.Num(), 2);
+	if (O.Num() == 2)
+	{
+		TestTrue(TEXT("own finer grid"), O[1].Voxel == .02f && O[1].Cells[0].Equals(FVector3f(.21f, .01f, .01f), 1e-4f));
+		TestTrue(TEXT("haptic fields"), O[1].Haptic == TEXT("tick") && O[1].HapticRange == .6f && O[1].HapticGain == .8f && O[0].HapticRange < 0);
+	}
+	if (O.Num() >= 1)
 	{
 		TestEqual(TEXT("cells"), O[0].Cells.Num(), 2);
 		TestTrue(TEXT("cell centre"), O[0].Cells[1].Equals(FVector3f(.25f, .05f, .05f), 1e-4f));

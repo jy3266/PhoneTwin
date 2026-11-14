@@ -28,6 +28,6 @@ struct PHONETWINLINK_API FPhoneTwinSetupValues
 	FString Problem() const;
 };
 
-/** The start screen. OnStart gets the values the visitor confirmed; OnClose (may be empty) closes it without changes. */
+/** The start screen. OnStart gets the values the visitor confirmed; OnClose (may be empty) closes it without changes; OnQuit = ESC. */
 PHONETWINLINK_API TSharedRef<SWidget> MakePhoneTwinSetupWidget(const FPhoneTwinSetupValues& Init, const TArray<FString>& ScanIds, bool bHasBuiltInKey,
-	TFunction<void(const FPhoneTwinSetupValues&)> OnStart, TFunction<void()> OnClose);
+	TFunction<void(const FPhoneTwinSetupValues&)> OnStart, TFunction<void()> OnClose, TFunction<void()> OnQuit);
