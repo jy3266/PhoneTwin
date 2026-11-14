@@ -40,7 +40,7 @@ export function createTrails(o) {
   }
   function hideGate() { gate.classList.add('hidden'); document.body.classList.remove('gated'); }
   function signedOut(text) {
-    st.token = null; st.sid = null; st.done = false;
+    st.token = null; st.sid = null; st.done = false; st.guest = false;
     try { sessionStorage.removeItem('ptTrailToken'); } catch (e) { /* storage blocked */ }
     updateChip(); showGate('login', text);
   }
@@ -51,7 +51,7 @@ export function createTrails(o) {
     msg.textContent = '확인 중…';
     try {
       const j = await call('login', { id, pin });
-      st.token = j.token; st.id = j.id; st.done = false;
+      st.token = j.token; st.id = j.id; st.done = false; st.guest = false;
       try { sessionStorage.setItem('ptTrailToken', j.token); sessionStorage.setItem('ptTrailUser', j.id); localStorage.setItem('ptTrailId', j.id); } catch (err) { /* storage blocked */ }
       $('gatePin').value = '';
       o.toast(j.created ? `반갑습니다, ${j.id} 님 · 새 아이디가 만들어졌습니다` : `${j.id} 님, 체험을 시작합니다`);
@@ -61,6 +61,7 @@ export function createTrails(o) {
   $('gatePin').addEventListener('input', (e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); });
   $('gateAgain').addEventListener('click', () => startExperience());
   $('gateSwitch').addEventListener('click', () => { $('gateId').value = ''; $('gatePin').value = ''; signedOut('새 아이디와 비밀번호(숫자 4개)를 정해 주세요'); });
+  $('gateBrowse').addEventListener('click', () => { hideGate(); st.guest = true; updateChip(); o.toast('로그인 없이 흔적 보기 · 아무것도 기록되지 않습니다'); });
   $('gateLook').addEventListener('click', () => { hideGate(); st.ended = 'look'; updateChip(); });
   $('gateOffline').addEventListener('click', () => { hideGate(); st.ended = 'offline'; updateChip(); });
   $('endBtn').addEventListener('click', () => endExperience(true));
@@ -121,6 +122,7 @@ export function createTrails(o) {
   }
   /** Every frame, with the audience position the page shows (scan frame). */
   function tick(p, now) {
+    updateTail(p, now);
     if (!st.sid) return;
     // the experience follows where it happens: a web walk becomes an on-site one when the real system appears (and back)
     const want = o.isSite() ? 'site' : 'web';
@@ -147,7 +149,7 @@ export function createTrails(o) {
     const chip = $('expChip');
     chip.dataset.state = st.sid ? st.kind : 'idle';
     $('chipText').textContent = st.sid ? `${st.id} · ${st.kind === 'site' ? '현장 체험 중 (푸른 빛)' : '웹 체험 중 (보라 빛)'}` :
-      st.ended === 'offline' ? '기록 없이 보는 중' : st.token ? `${st.id} · ${st.done ? '체험 끝 · 모든 흔적 보기' : '체험 전'}` : '로그인 전';
+      st.ended === 'offline' ? '기록 없이 보는 중' : st.guest ? '로그인 없이 흔적 보기' : st.token ? `${st.id} · ${st.done ? '체험 끝 · 모든 흔적 보기' : '체험 전'}` : '로그인 전';
     $('endBtn').hidden = !st.sid; $('chipStart').hidden = !!st.sid || st.ended === 'offline';
   }
   setInterval(() => { if (st.sid) $('chipTime').textContent = fmt((performance.now() - st.t0) / 1000); else $('chipTime').textContent = ''; }, 500);
@@ -156,13 +158,13 @@ export function createTrails(o) {
   const group = new THREE.Group(); o.scene.add(group);
   const uni = { uTime: { value: 0 }, uScale: { value: 500 }, uRes: { value: new THREE.Vector2(1280, 800) } };
   /** A camera-facing ribbon: every path point is two vertices pushed apart on screen; the fragment is a soft glow across it. */
-  function material(color, alpha, width) {
+  function material(color, alpha, width, taper = 0) {
     return new THREE.ShaderMaterial({
-      uniforms: { ...uni, uColor: { value: color }, uAlpha: { value: alpha }, uWidth: { value: width } },
+      uniforms: { ...uni, uColor: { value: color }, uAlpha: { value: alpha }, uWidth: { value: width }, uTaper: { value: taper } },
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
       vertexShader: /* glsl */`
         attribute vec3 aPrev; attribute vec3 aNext; attribute float aSide; attribute float aU; attribute float aFresh;
-        uniform float uTime, uScale, uWidth, uAlpha; uniform vec2 uRes;
+        uniform float uTime, uScale, uWidth, uAlpha, uTaper; uniform vec2 uRes;
         varying float vEdge; varying float vA;
         void main() {
           mat4 m = projectionMatrix * modelViewMatrix;
@@ -171,11 +173,12 @@ export function createTrails(o) {
           vec2 dir = n.xy / max(n.w, 1e-3) * asp - p.xy / max(p.w, 1e-3) * asp;
           dir = dot(dir, dir) < 1e-12 ? vec2(1.0, 0.0) : normalize(dir);
           float px = clamp(uWidth * uScale / max(c.w, 0.05), 2.5, 28.0);         // full width in pixels, thinner far away
+          px *= mix(1.0, 0.2 + 0.8 * aFresh, uTaper);                            // a tail narrows towards its old end
           c.xy += vec2(-dir.y, dir.x) / asp * (px / uRes.y) * aSide * c.w;
           gl_Position = c;
           vEdge = aSide;
           float flow = 0.7 + 0.3 * sin(aU * 7.0 - uTime * 1.8);                  // light running along the line
-          vA = uAlpha * flow * (0.65 + 0.35 * aFresh);
+          vA = uAlpha * flow * mix(0.65 + 0.35 * aFresh, aFresh * aFresh, uTaper);   // and fades out
         }`,
       fragmentShader: /* glsl */`
         uniform vec3 uColor;
@@ -234,18 +237,47 @@ export function createTrails(o) {
       return s;
     });
   }
-  function addRibbon(b, s, fresh) {
+  function addRibbon(b, s, fresh) {   // fresh: one value, or one per point
     const n = s.length, base = b.pos.length / 3;
     let u = 0;
     for (let i = 0; i < n; i++) {
       if (i) u += s[i].distanceTo(s[i - 1]);
       const p = s[i], a = s[Math.max(0, i - 1)], c = s[Math.min(n - 1, i + 1)];
-      for (const side of [-1, 1]) { b.pos.push(p.x, p.y, p.z); b.prev.push(a.x, a.y, a.z); b.next.push(c.x, c.y, c.z); b.side.push(side); b.u.push(u); b.fresh.push(fresh); }
+      for (const side of [-1, 1]) { b.pos.push(p.x, p.y, p.z); b.prev.push(a.x, a.y, a.z); b.next.push(c.x, c.y, c.z); b.side.push(side); b.u.push(u); b.fresh.push(Array.isArray(fresh) ? fresh[i] : fresh); }
       if (i < n - 1) { const k = base + i * 2; b.idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
     }
   }
+  const empty = () => ({ pos: [], prev: [], next: [], side: [], u: [], fresh: [], idx: [] });
+  function geometry(b) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
+    g.setAttribute('aPrev', new THREE.Float32BufferAttribute(b.prev, 3));
+    g.setAttribute('aNext', new THREE.Float32BufferAttribute(b.next, 3));
+    g.setAttribute('aSide', new THREE.Float32BufferAttribute(b.side, 1));
+    g.setAttribute('aU', new THREE.Float32BufferAttribute(b.u, 1));
+    g.setAttribute('aFresh', new THREE.Float32BufferAttribute(b.fresh, 1));
+    g.setIndex(b.idx);
+    return g;
+  }
+  // while exploring: a few seconds of light right behind the butterfly, narrowing and fading (not the saved trail)
+  const TAIL_MS = 3000;
+  const tail = new THREE.Mesh(new THREE.BufferGeometry(), material(COLORS.web.clone().lerp(white, 0.2), 1.1, 0.12, 1));
+  tail.frustumCulled = false; tail.visible = false; tail.userData.pts = []; o.scene.add(tail);
+  function updateTail(p, now) {
+    const pts = tail.userData.pts;
+    tail.visible = phase === 'explore';
+    if (!tail.visible) { pts.length = 0; return; }
+    tail.material.uniforms.uColor.value.copy(COLORS[st.kind] || COLORS.web).lerp(white, 0.2);
+    const last = pts[pts.length - 1];
+    if (last && last.p.distanceTo(p) > JUMP_M) pts.length = 0;   // a tracking jump starts a new tail
+    if (!last || last.p.distanceTo(p) > 0.01 || now - last.t > 100) pts.push({ p: p.clone(), t: now });
+    while (pts.length && now - pts[0].t > TAIL_MS) pts.shift();
+    const s = pts.map((q) => q.p).concat([p.clone()]), fr = pts.map((q) => 1 - (now - q.t) / TAIL_MS).concat([1]);
+    const b = empty();
+    if (s.length > 1) addRibbon(b, s, fr);
+    tail.geometry.dispose(); tail.geometry = geometry(b);
+  }
   function draw() {
-    const empty = () => ({ pos: [], prev: [], next: [], side: [], u: [], fresh: [], idx: [] });
     const buckets = { site: empty(), web: empty(), siteMine: empty(), webMine: empty() };
     let total = 0, lastMine = null, lastMineKind = 'web';
     const counts = { site: 0, web: 0, mine: 0 };
@@ -256,17 +288,7 @@ export function createTrails(o) {
       for (const s of strokes(t.pts.map(toScan))) { addRibbon(b, s, t.live ? 1 : 0); total += s.length; }
       if (t.mine && t.pts.length) { lastMine = toScan(t.pts[t.pts.length - 1]); lastMineKind = t.kind; }
     }
-    for (const [k, b] of Object.entries(buckets)) {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
-      g.setAttribute('aPrev', new THREE.Float32BufferAttribute(b.prev, 3));
-      g.setAttribute('aNext', new THREE.Float32BufferAttribute(b.next, 3));
-      g.setAttribute('aSide', new THREE.Float32BufferAttribute(b.side, 1));
-      g.setAttribute('aU', new THREE.Float32BufferAttribute(b.u, 1));
-      g.setAttribute('aFresh', new THREE.Float32BufferAttribute(b.fresh, 1));
-      g.setIndex(b.idx);
-      layers[k].geometry.dispose(); layers[k].geometry = g;
-    }
+    for (const [k, b] of Object.entries(buckets)) { layers[k].geometry.dispose(); layers[k].geometry = geometry(b); }
     if (lastMine && st.id) setLabel(`${st.id} (나)`, COLORS[lastMineKind], lastMine); else label.visible = false;
     $('trailCount').textContent = `현장 ${counts.site} · 웹 ${counts.web}${st.id ? ` · 내 흔적 ${counts.mine}` : ''}`;
   }
@@ -286,7 +308,7 @@ export function createTrails(o) {
   // ------------------------------------------------------------ phases: explore (in an experience, no trails drawn) / review (finished: every trail)
   let phase = null;
   function setPhase() {
-    const p = st.sid ? 'explore' : st.done ? 'review' : 'idle';
+    const p = st.sid ? 'explore' : st.done || st.guest ? 'review' : 'idle';
     if (p === phase) return;
     phase = p;
     group.visible = p === 'review' && st.show;
@@ -314,7 +336,7 @@ export function createTrails(o) {
   }
 
   return {
-    tick, boot, refresh, get state() { return st; }, get phase() { return phase; }, layers, label,
+    tick, boot, refresh, get state() { return st; }, get phase() { return phase; }, layers, label, tail,
     frame(dt, scale, w, h) { uni.uTime.value += dt; uni.uScale.value = scale; if (w && h) uni.uRes.value.set(w, h); },
   };
 }

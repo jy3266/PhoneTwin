@@ -65,6 +65,10 @@ try {
   await sleep(1500);
   s = await st(A);
   check('while exploring no trails are drawn (the space only)', s.phase === 'explore' && !s.shown && s.layers.webMine === 0 && s.dim === 1, s);
+  check('exploring: a short fading tail of light right behind the butterfly', await A.evaluate(() => { const t = window.__immersive.trails.tail, g = t.geometry.getAttribute('position'), f = t.geometry.getAttribute('aFresh');
+    if (!t.visible || !g || g.count < 10) return false;
+    const end = new window.__immersive.me.position.constructor(g.getX(g.count - 1), g.getY(g.count - 1), g.getZ(g.count - 1));
+    return end.distanceTo(window.__immersive.me.position) < 0.05 && f.getX(0) < 0.6 && f.getX(f.count - 1) === 1; }));
   check('exploring folds the settings away', await A.evaluate(() => document.getElementById('panel').classList.contains('hidden')));
   await A.screenshot({ path: path.join(OUT, '2_walking.png') });
   await A.click('#endBtn');
@@ -139,6 +143,23 @@ try {
   s = await st(A);
   check('a new id starts a new experience, back to exploring', s.id === '별빛2' && s.phase === 'explore' && !s.shown && s.dim === 1 && await A.evaluate(() => document.querySelector('#cam .on').dataset.v === 'follow'), s);
 
+  // ---------------- a visitor who only looks: "흔적 보기" without signing in
+  const before = await (await fetch(`http://127.0.0.1:${RELAY}/trails/status`)).json();
+  const E = await openPage(await browser.createBrowserContext());
+  await E.waitForFunction(() => window.__immersive.trails.state.ready, { timeout: 10000 });
+  check('the first screen offers "흔적 보기" under "체험 시작"', await E.evaluate(() => { const b = document.getElementById('gateBrowse'), sub = document.querySelector('#gateForm button[type=submit]');
+    return b && b.offsetParent !== null && b.getBoundingClientRect().top > sub.getBoundingClientRect().top; }));
+  await E.click('#gateBrowse'); await sleep(1500);
+  s = await st(E);
+  check('without signing in: every trail shown, none marked mine, no tail', !s.gate && s.phase === 'review' && s.shown && s.dim < 0.5 && s.layers.web > 20 && s.layers.site > 20 && s.layers.webMine === 0 && s.layers.siteMine === 0 && !s.id
+    && await E.evaluate(() => !window.__immersive.trails.label.visible && !window.__immersive.trails.tail.visible) && /로그인 없이/.test(s.chip), s);
+  const after = await (await fetch(`http://127.0.0.1:${RELAY}/trails/status`)).json();
+  check('looking records nothing', after.visitors === before.visitors && after.sessions === before.sessions && after.trails === before.trails, { before, after });
+  await E.screenshot({ path: path.join(OUT, '6_guest.png') });
+  await E.click('#chipStart'); await sleep(300);
+  check('"체험 시작" from looking opens the sign-in', (await st(E)).mode === 'login' && (await st(E)).gate);
+
+  for (const pg of [A, B, C, E]) await pg.close().catch(() => {});   // software GL: five live 3D pages slow the next one down
   // ---------------- relay without the trail API: browse without recording
   const D = await (await browser.createBrowserContext()).newPage();
   D.on('pageerror', (e) => errors.push(String(e)));
