@@ -81,7 +81,7 @@ namespace PhoneTwin
 
 	// ---------------------------------------------------------------- the same looks on the GPU (PhoneTwinMaterial.cpp)
 	/** Material that draws BuildImmersive / BuildGlow in the shader from the static cloud (parameters PT_*, texture PT_Trail).
-	 *  The saved asset /Game/PhoneTwinScans/M_PhoneTwinImmersive if present, else (editor) built in memory. Null = CPU fallback. */
+	 *  The saved asset /Game/PhoneTwinRuntime/M_PhoneTwinImmersive (editor: PhoneTwin.SaveMaterial) if present, else (editor) built in memory. Null = CPU fallback. */
 	PHONETWINLINK_API UMaterialInterface* GetImmersiveMaterial();
 	PHONETWINLINK_API const TCHAR* ImmersiveMaterialPath();
 #if WITH_EDITOR

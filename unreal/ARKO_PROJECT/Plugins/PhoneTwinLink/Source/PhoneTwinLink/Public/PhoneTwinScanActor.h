@@ -52,6 +52,8 @@ enum class EPhoneTwinView : uint8
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FPhoneTwinProximity, float, DistanceCm, float, Intensity01, int32, ObjectId, const FString&, ObjectName);
 
+struct FPhoneTwinSetupValues;
+
 UCLASS(Blueprintable, meta = (DisplayName = "Phone Twin Scan"))
 class PHONETWINLINK_API APhoneTwinScanActor : public AActor
 {
@@ -363,6 +365,11 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Phone Twin|View")
 	bool bShowHud = true;
 
+	/** The packaged game opens with a start screen (input, scan, relay, OSC, ports, window) and nothing listens or connects
+	 *  before [시작]. Also here in the editor when this is on. -PhoneTwinSetup / -NoPhoneTwinSetup force it; F6 opens it again. */
+	UPROPERTY(EditAnywhere, Category = "Phone Twin|View")
+	bool bSetupInEditor = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|View")
 	bool bDrawDebug = true;
 
@@ -458,6 +465,12 @@ private:
 	struct FLink { double LastTime = -1e9; FString Address; uint32 Seq = 0; int64 Packets = 0; };
 
 	void OpenSocket();
+	void ShowSetup(bool bAtStart);
+	void CloseSetup();
+	void ApplySetup(const FPhoneTwinSetupValues& V);
+	void StartRuntime();
+	void StopRuntime();
+	TSharedPtr<SWidget> SetupWidget; bool bRuntimeStarted = false; FString BuiltInRelayKey, BuiltInRelayRoom;
 	void HandleLine(const FString& Line, const FString& From);
 	void ConnectRelay();
 	void TickRelay(float DeltaSeconds);

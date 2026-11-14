@@ -2,6 +2,9 @@
 #include "PhoneTwinCloud.h"
 #include "PhoneTwinSync.h"
 #include "PhoneTwinCalmSound.h"
+#include "PhoneTwinSetup.h"
+#include "GameFramework/GameUserSettings.h"
+#include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
 #include "LidarPointCloud.h"
 #include "LidarPointCloudComponent.h"
@@ -174,7 +177,7 @@ public:
 					]
 					+ SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
 					[ SNew(STextBlock).Font(Small).ColorAndOpacity(FLinearColor(.6f, .66f, .73f)).AutoWrapText(true)
-						.Text(FText::FromString(TEXT("1·2 입력 전환 · V 보기(전체/장치/캐릭터) · Q·E 회전 · 휠·Z·X 거리 · [ ] 점 크기 · K 빛 켬/끔 · B 콜리전 보기 · C 장치 시점 · H 점구름만/레벨 보기 · N 다음 스캔 · G 동기화 · M 마우스 · 7·8 UWB 태그를 바닥 A·B에 두고 좌표 맞춤 (9 지움)"))) ]
+						.Text(FText::FromString(TEXT("1·2 입력 전환 · V 보기(전체/장치/캐릭터) · Q·E 회전 · 휠·Z·X 거리 · [ ] 점 크기 · K 빛 켬/끔 · B 콜리전 보기 · C 장치 시점 · H 점구름만/레벨 보기 · N 다음 스캔 · G 동기화 · M 마우스 · F6 시작 설정 · 7·8 UWB 태그를 바닥 A·B에 두고 좌표 맞춤 (9 지움)"))) ]
 				]
 			]
 		];
@@ -201,9 +204,7 @@ APhoneTwinScanActor::APhoneTwinScanActor()
 void APhoneTwinScanActor::BeginPlay()
 {
 	Super::BeginPlay();
-	OpenSocket();
-	LoadUwbMarks();
-	ConnectRelay();
+	{ const UPhoneTwinSettings* S = GetDefault<UPhoneTwinSettings>(); BuiltInRelayKey = S->RelayKey; BuiltInRelayRoom = S->RelayRoom; }
 	SurfaceSnd = MakeObjSound(TEXT("surface"), TEXT("스캔 표면"), FVector::ZeroVector, SurfaceSound);
 	// two clouds for the light animation: a worker fills the hidden one while the other is drawn (rooted until EndPlay's worker is done)
 	LightBuffers.Reset();
@@ -234,22 +235,116 @@ void APhoneTwinScanActor::BeginPlay()
 	EditorScanStamp = IFileManager::Get().GetTimeStamp(*(UPhoneTwinSettings::ScanDir() / TEXT("collisions/last_saved.txt")));
 	if (ScanId.IsEmpty() && bFollowEditorScan) ScanId = EditorScan();   // what was edited last, else the newest
 	LoadScan(ScanId);
-	if (bAutoSync) SyncNow();
 	if (bHideLevelGeometry) SetHideLevelGeometry(true);
 	SetView(bFollowTracker ? EPhoneTwinView::Tracker : StartView);
 	ApplyLook();
+
+	// the packaged game asks first (start screen); the editor starts right away with the Details values
+#if WITH_EDITOR
+	bool bAsk = bSetupInEditor;
+#else
+	bool bAsk = true;
+#endif
+	if (FParse::Param(FCommandLine::Get(), TEXT("PhoneTwinSetup"))) bAsk = true;
+	if (FParse::Param(FCommandLine::Get(), TEXT("NoPhoneTwinSetup"))) bAsk = false;
+	FPhoneTwinSetupValues Saved; const bool bHaveSaved = Saved.Load();
+	if (!bAsk) StartRuntime();
+	else if (bHaveSaved && !Saved.bAskAtStart) ApplySetup(Saved);
+	else ShowSetup(true);
+}
+
+// ------------------------------------------------------------------------------------------------ start screen (packaged game)
+void APhoneTwinScanActor::StartRuntime()
+{
+	if (bRuntimeStarted) return;
+	bRuntimeStarted = true;
+	OpenSocket();
+	LoadUwbMarks();
+	ConnectRelay();
+	if (bAutoSync) SyncNow();
+	UE_LOG(LogPhoneTwin, Log, TEXT("running: input %s, relay %s, OSC %s:%d (%s), UWB OSC %d"), Source == EPhoneTwinSource::Phone ? TEXT("phone") : TEXT("UWB/ESP32"),
+		bUseRelay ? *GetDefault<UPhoneTwinSettings>()->RelayRoom : TEXT("off"), *OscAddress, OscPort, bSendOsc ? TEXT("on") : TEXT("off"), bUwbOscInput ? UwbOscPort : 0);
+}
+
+void APhoneTwinScanActor::StopRuntime()
+{
+	if (!bRuntimeStarted) return;
+	bRuntimeStarted = false;
+	// make sure no motor keeps running
+	if (Socket) { bTracking = false; Intensity = 0; bContact = false; SendHaptics(); }
+	if (Relay.IsValid()) { Relay->OnClosed().Clear(); Relay->OnMessage().Clear(); Relay->OnConnected().Clear(); Relay->OnConnectionError().Clear(); Relay->Close(); Relay.Reset(); }
+	if (Socket) { Socket->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket); Socket = nullptr; }
+	if (UwbSocket) { UwbSocket->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(UwbSocket); UwbSocket = nullptr; }
+}
+
+void APhoneTwinScanActor::ShowSetup(bool bAtStart)
+{
+	UGameViewportClient* VP = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
+	if (SetupWidget.IsValid() || !VP) { if (!VP) StartRuntime(); return; }
+	FPhoneTwinSetupValues V;
+	if (!V.Load())
+	{
+		V.Source = Source == EPhoneTwinSource::Phone ? 0 : 1; V.bAutoSync = bAutoSync; V.bRelay = bUseRelay; V.RelayRoom = BuiltInRelayRoom;
+		V.bOsc = bSendOsc; V.OscHost = OscAddress; V.OscPort = OscPort; V.UwbPort = bUwbOscInput ? UwbOscPort : 0; V.EspAddress = EspAddress;
+	}
+	TArray<FString> Ids; for (const FPhoneTwinLocalScan& L : FPhoneTwinSync::LocalScans()) Ids.Add(L.Id);
+	TWeakObjectPtr<APhoneTwinScanActor> Weak(this);
+	SetupWidget = MakePhoneTwinSetupWidget(V, Ids, !BuiltInRelayKey.IsEmpty(),
+		[Weak](const FPhoneTwinSetupValues& NV) { if (!Weak.IsValid()) return; NV.Save(); Weak->CloseSetup(); Weak->ApplySetup(NV); },
+		bAtStart ? TFunction<void()>() : TFunction<void()>([Weak]() { if (Weak.IsValid()) Weak->CloseSetup(); }));
+	VP->AddViewportWidgetContent(SetupWidget.ToSharedRef(), 100);
+	if (Hud.IsValid()) Hud->SetVisibility(EVisibility::Collapsed);
+	if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
+	{
+		PC->SetShowMouseCursor(true);
+		FInputModeUIOnly M; M.SetWidgetToFocus(SetupWidget); PC->SetInputMode(M);
+	}
+}
+
+void APhoneTwinScanActor::CloseSetup()
+{
+	if (!SetupWidget.IsValid()) return;
+	if (UGameViewportClient* VP = GetWorld() ? GetWorld()->GetGameViewport() : nullptr) VP->RemoveViewportWidgetContent(SetupWidget.ToSharedRef());
+	SetupWidget.Reset();
+	if (Hud.IsValid()) Hud->SetVisibility(EVisibility::SelfHitTestInvisible);
+	ShowMouse(bMouse);
+}
+
+void APhoneTwinScanActor::ApplySetup(const FPhoneTwinSetupValues& V)
+{
+	StopRuntime();   // ports and the relay may change: everything opens again with the new values
+	SetSource(V.Source == 0 ? EPhoneTwinSource::Phone : EPhoneTwinSource::Esp32);
+	bAutoSync = V.bAutoSync;
+	bUseRelay = V.bRelay;
+	UPhoneTwinSettings* S = GetMutableDefault<UPhoneTwinSettings>();
+	S->RelayRoom = V.RelayRoom.IsEmpty() ? BuiltInRelayRoom : V.RelayRoom;
+	S->RelayKey = V.RelayKey.IsEmpty() ? BuiltInRelayKey : V.RelayKey;
+	bSendOsc = V.bOsc; OscAddress = V.OscHost; OscPort = V.OscPort;
+	bUwbOscInput = V.UwbPort > 0; if (V.UwbPort > 0) UwbOscPort = V.UwbPort;
+	EspAddress = V.EspAddress;
+	// a scan picked on the screen stays on show; automatic = what the editor saved last, else the newest
+	bScanFromCmdLine = !V.Scan.IsEmpty();
+	const FString Want = V.Scan.IsEmpty() ? (bFollowEditorScan ? EditorScan() : FString()) : V.Scan;
+	if (Want != LoadedScanId) LoadScan(Want);
+#if !WITH_EDITOR
+	if (UGameUserSettings* GS = GEngine ? GEngine->GetGameUserSettings() : nullptr)
+	{
+		GS->SetFullscreenMode(V.bFullscreen ? EWindowMode::WindowedFullscreen : EWindowMode::Windowed);
+		if (V.bFullscreen) GS->SetScreenResolution(GS->GetDesktopResolution()); else GS->SetScreenResolution(FIntPoint(1600, 900));
+		GS->ApplySettings(false);
+	}
+#endif
+	StartRuntime();
 }
 
 void APhoneTwinScanActor::EndPlay(const EEndPlayReason::Type Reason)
 {
-	// make sure no motor keeps running
-	if (Socket) { bTracking = false; Intensity = 0; bContact = false; SendHaptics(); }
+	StopRuntime();
 	FPhoneTwinSync::Get().OnSynced.Remove(SyncHandle);
+	if (SetupWidget.IsValid()) if (UGameViewportClient* VP = GetWorld()->GetGameViewport()) VP->RemoveViewportWidgetContent(SetupWidget.ToSharedRef());
+	SetupWidget.Reset();
 	if (Hud.IsValid()) if (UGameViewportClient* VP = GetWorld()->GetGameViewport()) VP->RemoveViewportWidgetContent(Hud.ToSharedRef());
 	Hud.Reset();
-	if (Relay.IsValid()) { Relay->OnClosed().Clear(); Relay->OnMessage().Clear(); Relay->Close(); Relay.Reset(); }
-	if (Socket) { Socket->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket); Socket = nullptr; }
-	if (UwbSocket) { UwbSocket->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(UwbSocket); UwbSocket = nullptr; }
 	SetHideLevelGeometry(false);
 	// a light frame may still be written on a worker: wait for it, then let the buffers go after its queued game-thread work
 	for (int32 i = 0; *LightWorking && i < 3000; i++) FPlatformProcess::Sleep(.001f);
@@ -584,6 +679,13 @@ double APhoneTwinScanActor::LinkTimeout(const FLink& L) const
 void APhoneTwinScanActor::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (!bRuntimeStarted)   // the start screen is up: the scan is shown, nothing listens or sends yet
+	{
+		TickLight(DeltaSeconds);
+		UpdateOverview(DeltaSeconds);
+		if (bHideLevelGeometry && (HideTimer += DeltaSeconds) > 1.0) { HideTimer = 0; HideOthers(); }
+		return;
+	}
 	Receive();
 	ReceiveUwbOsc();
 	TickRelay(DeltaSeconds);
@@ -914,6 +1016,8 @@ bool APhoneTwinScanActor::MarksAB(FVector& OutA, FVector& OutB, bool& bFromPhone
 void APhoneTwinScanActor::HandleKeys()
 {
 	APlayerController* PC = GetWorld()->GetFirstPlayerController(); if (!PC) return;
+	if (SetupWidget.IsValid()) return;
+	if (PC->WasInputKeyJustPressed(EKeys::F6)) { ShowSetup(false); return; }
 	if (PC->WasInputKeyJustPressed(EKeys::One)) SetSource(EPhoneTwinSource::Phone);
 	if (PC->WasInputKeyJustPressed(EKeys::Two)) SetSource(EPhoneTwinSource::Esp32);
 	if (PC->WasInputKeyJustPressed(EKeys::C)) SetFollowTracker(!bFollowTracker);

@@ -12,6 +12,7 @@
 #include "Editor.h"
 #include "LidarPointCloud.h"
 #include "PhoneTwinCloud.h"
+#include "Materials/Material.h"
 #include "PhoneTwinSync.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPhoneTwinEditor, Log, All);
@@ -28,6 +29,26 @@ public:
 			FConsoleCommandDelegate::CreateLambda([]() { FPhoneTwinSync::Get().Run(); })));
 		Commands.Add(IConsoleManager::Get().RegisterConsoleCommand(TEXT("PhoneTwin.ImportAll"), TEXT("Create/refresh point cloud assets for every PLY in <Project>/PhoneTwinScans"),
 			FConsoleCommandDelegate::CreateLambda([this]() { ImportMissing(true); })));
+		Commands.Add(IConsoleManager::Get().RegisterConsoleCommand(TEXT("PhoneTwin.SaveMaterial"), TEXT("Save the immersive look material as an asset (/Game/PhoneTwinRuntime) so packaged games use the GPU look"),
+			FConsoleCommandDelegate::CreateLambda([this]() { SaveImmersiveMaterial(); })));
+	}
+
+	/** Packaged games cannot build materials: save the one the editor builds in memory, in a folder that is always cooked. */
+	void SaveImmersiveMaterial()
+	{
+		const FString Path = PhoneTwin::ImmersiveMaterialPath();   // /Game/PhoneTwinRuntime/M_PhoneTwinImmersive.M_PhoneTwinImmersive
+		FString PkgName, ObjName; Path.Split(TEXT("."), &PkgName, &ObjName);
+		UPackage* Pkg = CreatePackage(*PkgName);
+		Pkg->FullyLoad();
+		if (UObject* Old = StaticFindObject(UObject::StaticClass(), Pkg, *ObjName))
+			Old->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_NonTransactional);
+		UMaterial* M = PhoneTwin::BuildImmersiveMaterial(Pkg, *ObjName, RF_Public | RF_Standalone);
+		FAssetRegistryModule::AssetCreated(M);
+		Pkg->MarkPackageDirty();
+		const FString File = FPackageName::LongPackageNameToFilename(PkgName, FPackageName::GetAssetPackageExtension());
+		FSavePackageArgs Args; Args.TopLevelFlags = RF_Public | RF_Standalone; Args.SaveFlags = SAVE_NoError;
+		const bool bOk = UPackage::SavePackage(Pkg, M, *File, Args);
+		UE_LOG(LogPhoneTwinEditor, Display, TEXT("immersive material %s: %s"), bOk ? TEXT("saved") : TEXT("NOT saved"), *File);
 	}
 	virtual void ShutdownModule() override
 	{

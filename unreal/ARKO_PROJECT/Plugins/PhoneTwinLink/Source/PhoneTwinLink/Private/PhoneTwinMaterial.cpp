@@ -99,7 +99,7 @@ if (Stage > 0.5) return Off;
 return saturate(Col) * Gain.rgb;
 )HLSL");
 
-	const TCHAR* ImmersiveMaterialPath() { return TEXT("/Game/PhoneTwinScans/M_PhoneTwinImmersive.M_PhoneTwinImmersive"); }
+	const TCHAR* ImmersiveMaterialPath() { return TEXT("/Game/PhoneTwinRuntime/M_PhoneTwinImmersive.M_PhoneTwinImmersive"); }   // always cooked (DefaultGame.ini)
 
 #if WITH_EDITOR
 	UMaterial* BuildImmersiveMaterial(UObject* Outer, FName Name, EObjectFlags Flags)
@@ -178,6 +178,7 @@ return saturate(Col) * Gain.rgb;
 		bTried = true;
 		// a saved asset (made by the editor module) works in packaged games too
 		UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, ImmersiveMaterialPath(), nullptr, LOAD_NoWarn | LOAD_Quiet);
+		if (!M) M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/PhoneTwinScans/M_PhoneTwinImmersive.M_PhoneTwinImmersive"), nullptr, LOAD_NoWarn | LOAD_Quiet);   // older place
 #if WITH_EDITOR
 		if (!M)
 		{

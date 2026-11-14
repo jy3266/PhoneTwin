@@ -113,6 +113,13 @@ ARKO_PROJECT에 이미 설치·빌드되어 있습니다(`Plugins/PhoneTwinLink`
 5. 방화벽: 처음 Play 때 Windows가 묻는 네트워크 허용을 **개인 네트워크 허용**으로 해 주세요(UDP 7777 수신).
 6. **OSC (TouchDesigner)**: Details > OSC — `Send Osc`(기본 켬)로 관객 위치와 사물마다의 거리를 `127.0.0.1:7000`에 보냅니다(PROTOCOL.md §4). 같은 값을 릴레이에 `PTU1`로도 올려 웹 뷰어에서 관객이 움직이는 것이 보입니다.
 
+## 2-P. 언리얼 Windows 패키지 (현장 PC용, 언리얼 설치 불필요)
+
+`powershell -ExecutionPolicy Bypass -File tools\package_unreal.ps1` (언리얼 에디터를 닫고) → `D:\PhoneTwin_Package\Windows\ARKO_PROJECT.exe`.
+스크립트가 ① GPU 모양 머티리얼을 에셋으로 저장(`PhoneTwin.SaveMaterial`, 패키지는 머티리얼을 만들 수 없음) ② Shipping 패키징(셰이더 컴파일 동시 작업 8개 — `-ShaderWorkers`, 32코어 전부 쓰면 메모리 부족) ③ `ARKO_PROJECT\PhoneTwinScans`(스캔·콜리전·소리)를 패키지 옆에 복사 ④ `README_PhoneTwin.txt`를 씁니다.
+실행하면 **시작 설정 화면**이 먼저 뜹니다: 관객을 움직이는 장치(휴대폰 앱/UWB 태그), 스캔, GitHub 자동 받기, 릴레이(방·키), TouchDesigner 주소·포트, UWB 수신 포트, 진동 장치 IP, 전체 화면. [시작] 전에는 네트워크를 열지 않고, 값은 `%LOCALAPPDATA%\ARKO_PROJECT\Saved\PhoneTwinSetup.json`에 기억됩니다. 실행 중 **F6**으로 다시 열기. 에디터 Play는 예전처럼 바로 시작(Details > Phone Twin|View > `bSetupInEditor`로 에디터에서도 볼 수 있음, 명령줄 `-PhoneTwinSetup`/`-NoPhoneTwinSetup`).
+패키지에는 `Config/DefaultGame.ini`의 릴레이 키가 들어가므로 전시 PC에만 두고 공개하지 마세요(설정 화면에서 다른 키를 넣을 수도 있음).
+
 ## 2-0. 콜리전·소리 편집기
 
 `콜리전_편집기.bat`을 더블클릭하면 브라우저에 편집기가 열립니다(Node.js 필요, 이 PC 안에서만 동작). 켤 때 새 스캔을 C:·D: 두 곳에 보관하고, 콜리전이 없는 스캔은 자동으로 만듭니다.
