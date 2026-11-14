@@ -116,7 +116,7 @@ function showSelected() {
   $('haptic').value = c.haptic || 'steady';
   $('hapticRange').value = c.hapticRange ?? HAPTIC_RANGE; $('hapticRangeOut').textContent = fmtM($('hapticRange').value);
   $('hapticGain').value = c.hapticGain ?? 1; $('hapticGainOut').textContent = `${Math.round($('hapticGain').value * 100)}%`;
-  $('hapticAt').max = Math.max(0.2, +$('hapticRange').value + 0.3);
+  $('hapticAt').max = Math.max(0.1, +$('hapticRange').value + 0.1);
   fillSounds();
   const isAsset = (c.nearSound || '').startsWith('/Game');
   $('assetPath').value = isAsset ? c.nearSound : '';
@@ -301,7 +301,7 @@ $('fitScan').onclick = () => {
 // ---------------------------------------------------------------- 진동: character, start distance, strength (+ a live preview)
 for (const [v, t] of HAPTICS) $('haptic').add(new Option(t, v));
 $('haptic').onchange = () => { if ($('haptic').value === 'steady') delete selected.haptic; else selected.haptic = $('haptic').value; markDirty(); renderList(); };
-$('hapticRange').oninput = () => { selected.hapticRange = +$('hapticRange').value; $('hapticRangeOut').textContent = fmtM(selected.hapticRange); $('hapticAt').max = selected.hapticRange + 0.3; markDirty(); };
+$('hapticRange').oninput = () => { selected.hapticRange = +$('hapticRange').value; $('hapticRangeOut').textContent = fmtM(selected.hapticRange); $('hapticAt').max = selected.hapticRange + 0.1; markDirty(); };
 $('hapticGain').oninput = () => { selected.hapticGain = +$('hapticGain').value; $('hapticGainOut').textContent = `${Math.round(selected.hapticGain * 100)}%`; markDirty(); };
 $('hapticAt').oninput = () => { $('hapticAtOut').textContent = fmtM($('hapticAt').value); };
 let hapticPhase = 0, hapticLast = performance.now(), walkHand = null;
@@ -418,14 +418,15 @@ function updateWalk() {
   if (!walker.visible || !data) return;
   const p = walker.position, rows = [];
   for (const c of data.collisions) {
-    const d = shapeDistance(c.cells, vox(c), p.x, 0, p.z, true), g = distanceGain(c, d);
-    const hand = shapeDistance(c.cells, vox(c), p.x, floor + 1.0, p.z), vib = Math.min(1, objectIntensity(hand, c.hapticRange ?? HAPTIC_RANGE) * (c.hapticGain ?? 1));
+    // the audience's hand at 1 m: sound and vibration both follow the hand, like Unreal (bSoundsFromHand)
+    const hand = shapeDistance(c.cells, vox(c), p.x, floor + 1.0, p.z), d = hand, g = distanceGain(c, d);
+    const vib = Math.min(1, objectIntensity(hand, c.hapticRange ?? HAPTIC_RANGE) * (c.hapticGain ?? 1));
     if (c === selected) walkHand = hand;
     const v = voices.get(c.id); if (v) v.gain.gain.setTargetAtTime(Math.min(1.5, g), audio.currentTime, 0.05);
     rows.push({ c, d, g, vib });
   }
   rows.sort((a, b) => a.d - b.d);
-  $('walkInfo').textContent = rows.slice(0, 5).map((r) => `${r.c.name}: ${(r.d * 100).toFixed(0)} cm · 소리 ${Math.round(r.g * 100)}% · 진동 ${Math.round(r.vib * 100)}%`).join('\n');
+  $('walkInfo').textContent = rows.slice(0, 5).map((r) => `${r.c.name}: 손에서 ${(r.d * 100).toFixed(0)} cm · 소리 ${Math.round(r.g * 100)}% · 진동 ${Math.round(r.vib * 100)}%`).join('\n');
 }
 $('walk').onchange = async () => {
   await audio.resume();

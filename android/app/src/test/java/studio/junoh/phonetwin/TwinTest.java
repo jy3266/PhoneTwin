@@ -17,7 +17,7 @@ public class TwinTest {
         Collisions.Shape b = c.shapes.get(0);
         assertEquals(100, b.id); assertEquals("침대", b.name); assertTrue(b.ai); assertEquals(.5f, b.volume, 1e-6);
         assertEquals(.02f, b.cells[0], 1e-6); assertEquals(.06f, b.cells[3], 1e-6); assertEquals(.02f, b.cellR, 1e-6);
-        assertEquals(.06f, b.cx, 1e-6); assertEquals(4f, b.maxRange(), 0); assertEquals(.5f, b.fullRange(), 0);
+        assertEquals(.06f, b.cx, 1e-6); assertEquals(.35f, b.maxRange(), 0); assertEquals(.06f, b.fullRange(), 0);   // hand rule defaults
         assertTrue(c.shapes.get(1).muted); assertEquals(2f, c.shapes.get(1).maxRange(), 0);
     }
 
@@ -34,12 +34,12 @@ public class TwinTest {
     @Test public void gainsFollowTheWebAndUnrealFormula() throws Exception {
         Collisions c = Collisions.parse(FILE);
         float[] fwd = {0, 1};   // looking along +z
-        // in front, 2.25 m: G = (4-2.25)/(4-.5) = .5 → .25 · volume .5
-        float[] g = c.gains(new float[]{2.25f, .1f}, new float[]{.06f, 0, -2.3f}, fwd, 1);
+        // in front, 20.5 cm from the hand: G = (.35-.205)/(.35-.06) = .5 → .25 · volume .5
+        float[] g = c.gains(new float[]{.205f, .1f}, new float[]{.06f, 0, -2.3f}, fwd, 1);
         assertEquals(.125f, g[0], 1e-4);
         assertEquals(0f, g[1], 0);   // muted
         // straight behind: 30 %
-        g = c.gains(new float[]{2.25f, 9f}, new float[]{.06f, 0, 2.3f}, fwd, 1);
+        g = c.gains(new float[]{.205f, 9f}, new float[]{.06f, 0, 2.3f}, fwd, 1);
         assertEquals(.125f*.3f, g[0], 1e-4);
         // inside the full distance and beyond the range
         assertEquals(1f, Collisions.distanceGain(.3f, .5f, 4f), 0);
@@ -124,9 +124,9 @@ public class TwinTest {
     @org.junit.Test public void objectHapticsLikeUnreal() throws Exception {
         assertEquals(0f, Collisions.objectIntensity(1.2f, 1.2f, .03f), 0);
         assertEquals(1f, Collisions.objectIntensity(.02f, 1.2f, .03f), 1e-6);
-        assertTrue(Collisions.objectIntensity(1.199f, 1.2f, .03f) > .079f);
-        assertEquals(.08f + .92f*(float)Math.pow(.5, 1.6), Collisions.objectIntensity(.615f, 1.2f, .03f), 1e-4);
-        assertTrue(Collisions.objectIntensity(.2f, 1.2f, .03f) - Collisions.objectIntensity(.4f, 1.2f, .03f) > Collisions.objectIntensity(.8f, 1.2f, .03f) - Collisions.objectIntensity(1f, 1.2f, .03f));
+        assertTrue(Collisions.objectIntensity(1.199f, 1.2f, .03f) > .549f);
+        assertEquals(.775f, Collisions.objectIntensity(.615f, 1.2f, .03f), 1e-4);
+        assertEquals(0f, Collisions.objectIntensity(.085f, .08f, .04f), 0);
         assertEquals(1f, Collisions.hapticShape("", .7), 0);
         assertTrue(Collisions.hapticShape("tick", .1) == 1f && Collisions.hapticShape("tick", .6) == 0f);
         assertTrue(Collisions.hapticRate("pulse", 1) > Collisions.hapticRate("pulse", 0));

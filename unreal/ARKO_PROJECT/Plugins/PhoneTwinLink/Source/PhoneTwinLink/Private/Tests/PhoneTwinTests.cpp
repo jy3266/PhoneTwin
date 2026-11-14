@@ -78,9 +78,9 @@ bool FPhoneTwinGridTest::RunTest(const FString&)
 	// shapes: felt from far, rising ever faster (same numbers in Collisions.java and collision_core.js)
 	TestEqual(TEXT("object out of range"), ObjectIntensity(120, 120, 3), 0.f);
 	TestEqual(TEXT("object contact"), ObjectIntensity(2, 120, 3), 1.f);
-	TestTrue(TEXT("object felt at the edge"), ObjectIntensity(119.9, 120, 3) > .079f);
-	TestTrue(TEXT("object mid (t=.5)"), FMath::Abs(ObjectIntensity(61.5, 120, 3) - (.08f + .92f * FMath::Pow(.5f, 1.6f))) < 1e-4);
-	TestTrue(TEXT("rises faster when close"), ObjectIntensity(20, 120, 3) - ObjectIntensity(40, 120, 3) > ObjectIntensity(80, 120, 3) - ObjectIntensity(100, 120, 3));
+	TestTrue(TEXT("clear at once at the edge"), ObjectIntensity(119.9, 120, 3) > .549f);
+	TestTrue(TEXT("object mid (t=.5)"), FMath::Abs(ObjectIntensity(61.5, 120, 3) - .775f) < 1e-4);
+	TestEqual(TEXT("nothing a little farther than the hand band"), ObjectIntensity(8.5, 8, 4), 0.f);
 	TestEqual(TEXT("steady"), HapticShape(EHaptic::Steady, .7), 1.f);
 	TestTrue(TEXT("tick has gaps"), HapticShape(EHaptic::Tick, .1) == 1.f && HapticShape(EHaptic::Tick, .6) == 0.f);
 	TestTrue(TEXT("pulse quickens"), HapticRate(EHaptic::Pulse, 1) > HapticRate(EHaptic::Pulse, 0));

@@ -158,13 +158,13 @@ namespace PhoneTwin
 		if (S == TEXT("wave")) return EHaptic::Wave;
 		return EHaptic::Steady;
 	}
-	/** Objects: felt from Range on, rising ever faster to 1 at Contact (0.08 + 0.92 t^1.6). Any length unit, the same for all three. */
+	/** Objects: felt only right at the hand — a clear 0.55 the moment the hand is within Range, 1 at Contact. Any length unit, the same for all three. */
 	inline float ObjectIntensity(double Dist, double Range, double Contact)
 	{
 		const double C = FMath::Min(Contact, Range * 0.9);
 		if (Dist >= Range) return 0.f;
 		const double T = FMath::Clamp((Range - Dist) / (Range - C), 0.0, 1.0);
-		return (float)(0.08 + 0.92 * FMath::Pow(T, 1.6));
+		return (float)(0.55 + 0.45 * T);
 	}
 	/** Cycles per second of a pattern at strength I (pulse and tick quicken as the hand comes closer). */
 	inline double HapticRate(EHaptic P, float I)

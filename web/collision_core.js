@@ -3,7 +3,8 @@
 // [i,i+1]*voxel on x, and so on. File format: PROTOCOL.md §5.
 
 export const VOXEL = 0.04;
-export const SOUND_DEFAULTS = { nearSound: '', touchSound: '', volume: 1, fullDistance: 0.5, maxDistance: 4, muted: false };
+// 2026-11-14: distances are from the hand (3D): the sound rises just before the hand reaches the shape
+export const SOUND_DEFAULTS = { nearSound: '', touchSound: '', volume: 1, fullDistance: 0.06, maxDistance: 0.35, muted: false };
 /** Detail levels of a shape's own grid ("voxel" on the collision; the file's voxel when absent). */
 export const DETAILS = [0.04, 0.02, 0.01];
 export const MAX_CELLS = 120000;   // one shape; Unreal and the phone measure every cell every frame
@@ -12,14 +13,14 @@ export const voxelOf = (file, c) => (c && c.voxel > 0.001 ? c.voxel : file.voxel
 
 // ---------------------------------------------------------------- vibration (the same rule as PhoneTwinCore.h and Collisions.java)
 export const HAPTICS = [['steady', '일정'], ['pulse', '맥박 (가까울수록 빨라짐)'], ['heartbeat', '두근두근'], ['rumble', '웅웅 (냉장고·TV처럼 떨림)'], ['tick', '톡톡 (가까울수록 빨라짐)'], ['wave', '물결 (천천히 밀려옴)']];
-export const HAPTIC_RANGE = 1.2;   // m, Unreal's ObjectReactRange
-export const CONTACT = 0.03;
-/** Felt from range on, rising ever faster to 1 at contact. */
+export const HAPTIC_RANGE = 0.08;   // m, Unreal's ObjectReactRange: only right at the hand
+export const CONTACT = 0.04;
+/** Felt only at the hand: 0.55 the moment it is within range, 1 at contact. */
 export function objectIntensity(d, range = HAPTIC_RANGE, contact = CONTACT) {
   const c = Math.min(contact, range * 0.9);
   if (d >= range) return 0;
   const t = clamp((range - d) / (range - c), 0, 1);
-  return 0.08 + 0.92 * Math.pow(t, 1.6);
+  return 0.55 + 0.45 * t;
 }
 export function hapticRate(p, i) {
   return { pulse: 1.2 + 4 * i, heartbeat: 1 / (1.2 - 0.5 * i), rumble: 7, tick: 1.5 + 6 * i, wave: 0.6 }[p] || 0;

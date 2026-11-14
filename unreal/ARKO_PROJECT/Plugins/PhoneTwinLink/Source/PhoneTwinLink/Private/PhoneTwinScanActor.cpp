@@ -834,7 +834,7 @@ void APhoneTwinScanActor::Measure()
 			for (const FObjectUE& O : Objects) if (O.bAi && O.Cells.IsEmpty() && FVector::Dist(P, O.C) < O.R + 10.0) { Obj = O.Id; break; }   // surface of a recognised object
 		}
 	}
-	float BestI = Obj == -1 ? 0.f : PhoneTwin::Intensity(Best, ReactRange, ContactDistance);
+	float BestI = Obj == -1 ? 0.f : PhoneTwin::ObjectIntensity(Best, ReactRange, ContactDistance);   // walls too: clear the moment the hand is there
 	int32 Win = -1;
 	for (int32 i = 0; i < Objects.Num(); i++)
 	{
@@ -967,7 +967,7 @@ void APhoneTwinScanActor::UpdateSounds()
 	if (bTracking)
 		for (int32 i = 0; i < Objects.Num(); i++)
 		{
-			const double D = Objects[i].FloorD;
+			const double D = bSoundsFromHand ? Objects[i].HandD : Objects[i].FloorD;   // just before the hand reaches it
 			FloorD[i] = D;
 			if (D < (Objects[i].MaxCm >= 0 ? Objects[i].MaxCm : SoundRange) && !Objects[i].bMuted) Near.Add({D, i});
 		}
@@ -988,8 +988,10 @@ void APhoneTwinScanActor::UpdateSounds()
 	for (int32 i = 0; i < Sounds.Num() && i < Objects.Num(); i++)
 	{
 		const bool bHand = bTracking && bContact && ObjectId == Objects[i].Id;
-		const bool bTouch = bTracking && !Objects[i].bMuted && (bHand || FloorD[i] <= TouchDistance);
-		const bool bRelease = !bTracking || (!bHand && FloorD[i] > TouchDistance + 15.0);
+		// the chime: the hand touching (or, without bSoundsFromHand, the audience standing within TouchDistance)
+		const bool bAt = bSoundsFromHand ? FloorD[i] <= ContactDistance : FloorD[i] <= TouchDistance;
+		const bool bTouch = bTracking && !Objects[i].bMuted && (bHand || bAt);
+		const bool bRelease = !bTracking || (!bHand && FloorD[i] > (bSoundsFromHand ? ContactDistance + 5.0 : TouchDistance + 15.0));
 		const bool bWasTouching = Sounds[i].bTouching; const double Struck = Sounds[i].LastStrike;
 		DriveSound(Sounds[i], Gain[i], bTouch, bRelease, i);
 		if (Sounds[i].LastStrike != Struck)   // the touch chime rang: a wave of light starts there too (web 물결)

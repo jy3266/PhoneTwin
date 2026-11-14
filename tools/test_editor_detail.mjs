@@ -62,15 +62,15 @@ try {
 
   // 진동: character, start distance, strength
   await page.select('#haptic', 'tick');
-  await page.$eval('#hapticRange', (el) => { el.value = '0.8'; el.dispatchEvent(new Event('input')); });
+  await page.$eval('#hapticRange', (el) => { el.value = '0.12'; el.dispatchEvent(new Event('input')); });
   await page.$eval('#hapticGain', (el) => { el.value = '0.6'; el.dispatchEvent(new Event('input')); });
   s = await st();
-  check('vibration settings stored on the shape', s.haptic === 'tick' && s.range === 0.8 && s.gain === 0.6, s);
+  check('vibration settings stored on the shape', s.haptic === 'tick' && s.range === 0.12 && s.gain === 0.6, s);
   // preview: far = nothing, close = strong; the tick pattern makes it come and go
   const sample = async (d) => { await page.$eval('#hapticAt', (el, v) => { el.value = String(v); el.dispatchEvent(new Event('input')); }, d); await sleep(700);
     return page.evaluate(() => { const g = document.getElementById('hapticCanvas').getContext('2d'); const x = 10 + 2, w = 600 - 24; let lit = 0; const px = g.getImageData(x, 160, w, 1).data; for (let i = 0; i < px.length; i += 4) if (px[i] > 200 && px[i + 1] > 90 && px[i + 1] < 140) lit++; return lit / w; }); };
-  const far = await sample(1.0);
-  const nearSamples = []; for (let i = 0; i < 6; i++) nearSamples.push(await sample(0.05));
+  const far = await sample(0.2);
+  const nearSamples = []; for (let i = 0; i < 6; i++) nearSamples.push(await sample(0.02));
   check('preview: nothing beyond the start distance', far < 0.02, far);
   check('preview: close = strong (about 55 % at strength 60 %)', Math.max(...nearSamples) > 0.4, nearSamples);
   check('preview: tick comes and goes', Math.min(...nearSamples) < 0.05, nearSamples);
@@ -82,7 +82,7 @@ try {
   check('list marks fine grid, part and vibration', /세밀 2 cm/.test(listText) && /부위/.test(listText) && /〰/.test(listText), listText.slice(0, 200));
   const saved = await page.evaluate(() => { const d = window.__editor.data; return JSON.parse(JSON.stringify({ voxel: d.voxel, collisions: d.collisions.map(({ mesh, ...r }) => r) })); });
   const part = saved.collisions.find((c) => c.parent);
-  check('saved form: per-shape voxel, parent, haptic fields', part && part.voxel === 0.02 && part.haptic === 'tick' && part.hapticRange === 0.8, part && { voxel: part.voxel, haptic: part.haptic });
+  check('saved form: per-shape voxel, parent, haptic fields', part && part.voxel === 0.02 && part.haptic === 'tick' && part.hapticRange === 0.12, part && { voxel: part.voxel, haptic: part.haptic });
   check('undo works across these steps', await page.evaluate(() => { for (let i = 0; i < 20; i++) document.getElementById('undo').click(); return window.__editor.data.collisions.every((c) => !c.parent); }));
 } catch (e) { console.log('FAIL', e.stack); failed++; }
 check('no page errors', errors.length === 0, errors.slice(0, 5));

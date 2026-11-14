@@ -12,10 +12,11 @@ import org.json.*;
 final class Collisions {
     // Unreal defaults (APhoneTwinScanActor): TouchDistance 35 cm, release +15 cm, TouchRepeatSeconds 4,
     // SoundRange 400 cm, SoundFullDistance 50 cm, MaxSimultaneousSounds 6, behind = 30 %
-    static final float TOUCH = .35f, RELEASE_EXTRA = .15f, REPEAT_S = 4f, FIRST_GAP_S = .8f;
-    static final float SOUND_RANGE = 4f, SOUND_FULL = .5f, BEHIND = .3f; static final int MAX_SOUNDS = 6;
-    /** Unreal's ObjectReactRange: shapes are felt from 1.2 m unless the editor set their own start distance. */
-    static final float OBJECT_RANGE = 1.2f;
+    // 2026-11-14: sounds and the chime follow the hand (3D distance), like Unreal's bSoundsFromHand: the chime rings at CONTACT
+    static final float TOUCH = .35f, RELEASE_EXTRA = .15f, REPEAT_S = 4f, FIRST_GAP_S = .8f, CONTACT = .04f, RELEASE_HAND = .05f;
+    static final float SOUND_RANGE = .35f, SOUND_FULL = .06f, BEHIND = .3f; static final int MAX_SOUNDS = 6;
+    /** Unreal's ObjectReactRange: the hand feels a shape only within 8 cm unless the editor set its own start distance. */
+    static final float OBJECT_RANGE = .08f;
 
     static final class Shape {
         int id; String label = "", name = "", nearSound = "", touchSound = ""; boolean ai, muted;
@@ -102,12 +103,12 @@ final class Collisions {
         float c = Math.min(contact, range*.9f);
         return d >= range ? 0 : Math.max(0, Math.min(1, (range - d)/(range - c)));
     }
-    /** PhoneTwin::ObjectIntensity: shapes are felt from range on, rising ever faster to 1 at contact (0.08 + 0.92 t^1.6). */
+    /** PhoneTwin::ObjectIntensity: felt only at the hand — 0.55 the moment it is within range, 1 at contact. */
     static float objectIntensity(float d, float range, float contact) {
         float c = Math.min(contact, range*.9f);
         if (d >= range) return 0;
         float t = Math.max(0, Math.min(1, (range - d)/(range - c)));
-        return (float)(.08 + .92*Math.pow(t, 1.6));
+        return .55f + .45f*t;
     }
     /** PhoneTwin::HapticRate: cycles per second of a vibration character at strength i. */
     static double hapticRate(String p, float i) {

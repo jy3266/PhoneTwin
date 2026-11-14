@@ -79,19 +79,19 @@
         <div class="buttons"><button id="playTouch">▶ 듣기</button><label class="file">파일 넣기<input id="touchFile" type="file" accept="audio/*"></label></div>
         <label class="field">언리얼 사운드 에셋 (선택)<input id="assetPath" type="text" placeholder="/Game/Sounds/MySound" autocomplete="off" spellcheck="false"></label>
         <label class="slider">볼륨 <input id="volume" type="range" min="0" max="2" step="0.05"><output id="volumeOut"></output></label>
-        <label class="slider">최대 크기 거리 <input id="fullDistance" type="range" min="0" max="5" step="0.05"><output id="fullOut"></output></label>
-        <label class="slider">들리기 시작 거리 <input id="maxDistance" type="range" min="0.2" max="12" step="0.1"><output id="maxOut"></output></label>
+        <label class="slider">최대 크기 거리 (손에서) <input id="fullDistance" type="range" min="0" max="0.5" step="0.01"><output id="fullOut"></output></label>
+        <label class="slider">들리기 시작 거리 (손에서) <input id="maxDistance" type="range" min="0.05" max="2" step="0.01"><output id="maxOut"></output></label>
         <label class="check"><input id="muted" type="checkbox"> 이 콜리전 소리 끄기</label>
-        <p class="hint">파일을 비워 두면 사물에 맞는 내장 소리를 씁니다. 표면에서 잰 거리로 크기가 바뀝니다.</p>
+        <p class="hint">파일을 비워 두면 사물에 맞는 내장 소리를 씁니다. 손에서 사물 표면까지 잰 거리로 크기가 바뀝니다: 손이 닿기 직전(기본 35 cm)부터 서서히 커지고 6 cm에서 최대, 손이 닿으면(4 cm) "닿을 때" 소리가 한 번 울립니다.</p>
       </section>
       <section>
         <h2>진동 (손으로 느끼는 것)</h2>
         <label class="field">진동 느낌<select id="haptic"></select></label>
-        <label class="slider">진동 시작 거리 <input id="hapticRange" type="range" min="0.1" max="3" step="0.05"><output id="hapticRangeOut"></output></label>
+        <label class="slider">진동 시작 거리 (손에서) <input id="hapticRange" type="range" min="0.02" max="0.3" step="0.01"><output id="hapticRangeOut"></output></label>
         <label class="slider">진동 세기 <input id="hapticGain" type="range" min="0" max="1.5" step="0.05"><output id="hapticGainOut"></output></label>
         <canvas id="hapticCanvas" width="600" height="190" aria-label="거리에 따른 진동 세기 그래프와 지금 진동"></canvas>
-        <label class="slider">미리보기 거리 <input id="hapticAt" type="range" min="0" max="3" step="0.01" value="0.4"><output id="hapticAtOut">0.40 m</output></label>
-        <p class="hint">그래프: 왼쪽이 멀리(진동 시작), 오른쪽이 손이 닿은 곳. 가까울수록 점점 더 강해집니다. 아래 막대는 미리보기 거리(관객을 세웠다면 그 관객의 손)에서 실제로 보내는 진동입니다. 사물마다 다른 느낌을 주면 관객이 진동만으로도 무엇인지 구분할 수 있습니다.</p>
+        <label class="slider">미리보기 거리 <input id="hapticAt" type="range" min="0" max="0.4" step="0.005" value="0.03"><output id="hapticAtOut">0.03 m</output></label>
+        <p class="hint">진동은 손이 사물에 닿을 때만 옵니다(기본 8 cm 안에서 바로 또렷하게, 4 cm 닿음에서 최대). 그래프: 왼쪽이 진동 시작, 오른쪽이 닿은 곳. 아래 막대는 미리보기 거리(관객을 세웠다면 그 관객의 손)에서 실제로 보내는 진동입니다. 사물마다 다른 느낌을 주면 관객이 진동만으로도 무엇인지 구분할 수 있습니다.</p>
       </section>
       <section>
         <h2>거리 시험</h2>

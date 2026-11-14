@@ -237,8 +237,9 @@ TD `signals` CHOP에는 `look`, `light_on`, `marks_source`, `uwb_residual`, `inp
 - (2026-11-14) `voxel`(선택): 이 모양만의 칸 크기(세밀도). 없으면 파일의 `voxel`(4 cm). 편집기에서 2 cm·1 cm로 바꾸면 칸을 나눈 뒤 실제 스캔 표면에 있는 칸만 남깁니다(1 cm는 바로 옆 칸까지). 한 모양 최대 12만 칸. 언리얼·앱·웹 모두 `(i+0.5)·voxel`로 읽습니다.
 - `parent`(선택): "부위 떼기"로 떼어 낸 부위가 원래 사물의 id를 기억합니다(표시용, 동작은 독립된 모양과 같음).
 - `haptic`(선택): 진동 느낌 `steady`(일정, 기본) · `pulse`(맥박) · `heartbeat`(두근두근) · `rumble`(웅웅) · `tick`(톡톡) · `wave`(물결). `hapticRange`: 진동이 시작되는 손 거리(m, 기본 = 언리얼 `ObjectReactRange` 1.2 m). `hapticGain`: 세기 배율(기본 1).
-- 진동(2026-11-14): 모양은 `I = 0.08 + 0.92·t^1.6`, `t = (range − d)/(range − contact)` — 진동 시작 거리에서 약하게 느껴지기 시작해 가까울수록 점점 더 빨리 세집니다(contact 3 cm에서 1). 스캔 표면(벽 등)은 예전처럼 30 cm에서 직선. 둘 중 가장 센 것이 이기고, 이긴 모양의 진동 느낌을 곱합니다(맥박·톡톡은 가까울수록 빨라짐). 진동 세기 0~255 = I × 255 (PTH1). 언리얼 `PhoneTwinCore.h`, 앱 `Collisions.java`, 편집기 `collision_core.js`가 같은 식입니다.
-- 거리: 관객 위치에서 모양 표면까지 바닥 평면으로 잰 값 `d`(m). 손 거리(진동)는 3차원으로 잼.
+- 진동(2026-11-14 개정 — 손에 닿을 때만): 손(휴대폰·태그)에서 모양 표면까지의 3D 거리 d가 진동 시작 거리(`hapticRange`, 기본 = 언리얼 `ObjectReactRange` 8 cm) 안에 들어오는 순간 `I = 0.55 + 0.45·t`, `t = (range − d)/(range − contact)`로 바로 또렷하게 시작해 contact 4 cm에서 1. 멀리서부터 서서히 오는 진동은 없음. 벽 같은 스캔 표면도 같은 식(`ReactRange` 8 cm). 가장 센 것이 이기고 그 모양의 진동 느낌(`haptic`)을 곱함 — 닿았을 때 무엇인지 구분하는 데 씀. 언리얼 `PhoneTwinCore.h`, 앱 `Collisions.java`, 편집기 `collision_core.js`가 같은 식입니다.
+- 소리(2026-11-14 개정): 언리얼 `bSoundsFromHand`(기본 켬)와 앱은 거리 d를 **손에서 모양 표면까지의 3D 거리**로 잽니다. 기본 `fullDistance` 0.06 m, `maxDistance` 0.35 m — 손이 닿기 직전부터 서서히 커짐. "닿을 때" 소리와 금빛 물결은 손이 contact(4 cm) 안에 들어올 때 울리고 9 cm 밖으로 떨어지면 다시 준비. 예전 콜리전 파일(0.5/4 m, 바닥 거리 기준)은 `tools/migrate_hand_sounds.mjs`로 옮겼고 이전 판은 `collisions/history/`. 웹 몰입 보기의 물결은 손이 없어 예전처럼 바닥 거리 35 cm.
+- 거리: 언리얼·앱은 손에서 모양 표면까지 3차원으로 잰 값 `d`(m)로 진동과 소리를 정합니다(2026-11-14부터, 아래). 웹 뷰어의 거리 표시와 몰입 보기 물결은 바닥 평면 거리.
 - 음량: `G = 1 (d ≤ fullDistance)`, 그 밖에는 `clamp((maxDistance − d) / (maxDistance − fullDistance), 0, 1)`, 최종 `G² × volume`. 웹 `distanceGain()`과 언리얼 `UpdateSounds()`가 같은 식이며, 언리얼은 관객이 등진 소리에 0.3배까지 줄이는 값을 더 곱합니다.
 
 언리얼은 파일이 없으면 스캔 meta의 구 모양으로 동작합니다.

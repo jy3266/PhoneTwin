@@ -261,15 +261,20 @@ public:
 	// ---------------------------------------------------------------- reaction
 	/** Vibration starts at this distance (cm) and is strongest at ContactDistance. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Reaction", meta = (ClampMin = "1"))
-	float ReactRange = 30.f;
+	float ReactRange = 8.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Reaction", meta = (ClampMin = "0"))
-	float ContactDistance = 3.f;
+	float ContactDistance = 4.f;
 
-	/** Shapes from the collision editor are felt from this far (cm) and grow ever stronger towards ContactDistance;
-	 *  each shape may set its own (editor: 진동 시작 거리). The scan surface keeps the short ReactRange. */
+	/** The hand feels a shape only when it is this close (cm): a clear vibration at once, full at ContactDistance.
+	 *  Each shape may set its own (editor: 진동 시작 거리). Identification comes from the shape's vibration character. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Reaction", meta = (ClampMin = "5"))
-	float ObjectReactRange = 120.f;
+	float ObjectReactRange = 8.f;
+
+	/** Object sounds and the touch chime follow the hand (3D distance to the shape) instead of the audience's floor position:
+	 *  they rise just before the hand reaches the object and the chime rings when it touches (ContactDistance). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound")
+	bool bSoundsFromHand = true;
 
 	/** Hand = tracked point + this many cm along its forward direction. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Reaction")
@@ -316,10 +321,10 @@ public:
 
 	/** Object sounds start at this distance (cm) and reach full volume at SoundFullDistance. A collision's own values from the editor win. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound")
-	float SoundRange = 400.f;
+	float SoundRange = 35.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound")
-	float SoundFullDistance = 50.f;
+	float SoundFullDistance = 6.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Phone Twin|Sound", meta = (ClampMin = "1"))
 	int32 MaxSimultaneousSounds = 6;

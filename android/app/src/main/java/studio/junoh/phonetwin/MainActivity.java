@@ -151,7 +151,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
     private volatile String alignText = "정렬 전";
 
     // feedback settings (metres)
-    private volatile float range = 0.30f, contactDist = 0.03f, probeOffset = 0f, objRadius = 0.25f;
+    private volatile float range = 0.08f, contactDist = 0.04f, probeOffset = 0f, objRadius = 0.25f;
     private double hapticPhase; private long hapticLastNs;   // vibration character of the shape being felt
     private volatile boolean surfaceOn = true, skipFloor = true, useScale = false;
 
@@ -338,8 +338,8 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         panel.addView(row(button("마지막 사물 삭제", v -> removeObject(false)), button("사물 전체 삭제", v -> removeObject(true))));
         objectInfo = label("", 12); panel.addView(objectInfo);
         panel.addView(number("사물 반경 (m)", "objr", .25f, .03f, 3f, v -> objRadius = v));
-        panel.addView(number("반응 시작 거리 (m)", "range", .30f, .05f, 2f, v -> range = v));
-        panel.addView(number("접촉 판정 거리 (m)", "contact", .03f, 0f, .5f, v -> contactDist = v));
+        panel.addView(number("반응 시작 거리 (m, 손 기준)", "rangeHand", .08f, .02f, 2f, v -> range = v));   // new keys: the old 30 cm / 3 cm stay unused
+        panel.addView(number("접촉 판정 거리 (m)", "contactHand", .04f, 0f, .5f, v -> contactDist = v));
         panel.addView(number("손 위치 = 카메라 앞 (m)", "offset", 0f, 0f, 1f, v -> probeOffset = v));
         surfaceOn = prefs.getBoolean("surface", true); skipFloor = prefs.getBoolean("floor", true);
         feedback.phoneVibe = prefs.getBoolean("vibe", true); feedback.tone = prefs.getBoolean("tone", false);
@@ -1636,7 +1636,7 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
             }
         }
         // surfaces: short and straight (range); shapes: from their start distance, rising ever faster — the strongest wins (Unreal's Measure)
-        float intensity = obj == 0 ? Collisions.intensity(best, range, contactDist) : 0; Collisions.Shape win = null;
+        float intensity = obj == 0 ? Collisions.objectIntensity(best, range, contactDist) : 0; Collisions.Shape win = null;   // walls too: clear at once
         if (obj == 0 && best >= range) { obj = -1; best = Float.POSITIVE_INFINITY; }
         if (tw != null) {
             tw.measure(p, hand);
@@ -1660,12 +1660,12 @@ public final class MainActivity extends Activity implements GLSurfaceView.Render
         String loudest = ""; float loud = .05f; int touchNow = -1;
         if (tw != null && vs.size() == tw.shapes.size() && ts.length == tw.shapes.size()) {
             int n = tw.shapes.size(); float[] fd = new float[n];
-            for (int i = 0; i < n; i++) fd[i] = tw.shapes.get(i).floorD*sc;
+            for (int i = 0; i < n; i++) fd[i] = tw.shapes.get(i).handD*sc;   // like Unreal's bSoundsFromHand: just before the hand reaches it
             float[] g = tw.gains(fd, p, h, sc);
             for (int i = 0; i < n; i++) {
                 Collisions.Shape o = tw.shapes.get(i); TwinAudio.Voice v = vs.get(i);
                 boolean byHand = contact && obj == o.id;
-                boolean touch = !o.muted && (byHand || fd[i] <= Collisions.TOUCH), release = !byHand && fd[i] > Collisions.TOUCH + Collisions.RELEASE_EXTRA;
+                boolean touch = !o.muted && (byHand || fd[i] <= contactDist), release = !byHand && fd[i] > contactDist + Collisions.RELEASE_HAND;
                 float s = ts[i].step(now, touch, release);
                 TwinAudio.set(v, soundOn ? g[i] : 0);
                 if (s > 0) { if (soundOn) TwinAudio.strike(v, s); feedback.touch(s); touchedObj = o.id; touchedAt = SystemClock.uptimeMillis(); }
