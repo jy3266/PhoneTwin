@@ -29,3 +29,4 @@ unreal/**/Saved/
 # Apeficiation upstream clone for tools/apeficiation_sim.py (not ours to republish)
 tools/.apeficiation/
 relay/data/
+docs/src/node_modules/
